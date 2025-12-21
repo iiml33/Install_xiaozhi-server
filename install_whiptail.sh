@@ -1,491 +1,2311 @@
-#!/bin/bash
 
-# 定义中断处理函数
-handle_interrupt() {
-    echo ""
-    echo "安装已被用户中断(Ctrl+C或Esc)"
-    echo "如需重新安装，请再次运行脚本"
-    # 杀死后台进程
-    kill $ESC_PID 2>/dev/null
-    exit 1
+
+
+
+
+
+<!DOCTYPE html>
+<html
+  lang="en"
+  
+  data-color-mode="auto" data-light-theme="light" data-dark-theme="dark"
+  data-a11y-animated-images="system" data-a11y-link-underlines="true"
+  
+  >
+
+    <style>
+:root {
+  --fontStack-monospace: "Monaspace Neon", ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace !important;
 }
-
-# 设置信号捕获，处理Ctrl+C
-trap handle_interrupt SIGINT
-
-# 处理Esc键
-# 保存终端设置
-old_stty_settings=$(stty -g)
-# 设置终端立即响应，不回显
-stty -icanon -echo min 1 time 0
+</style>
 
 
-# 打印彩色字符画
-echo -e "\e[1;32m"  # 设置颜色为亮绿色
-cat << "EOF"
-脚本作者：@Bilibili 香草味的纳西妲喵
- __      __            _  _  _            _   _         _      _      _        
- \ \    / /           (_)| || |          | \ | |       | |    (_)    | |       
-  \ \  / /__ _  _ __   _ | || |  __ _    |  \| |  __ _ | |__   _   __| |  __ _ 
-   \ \/ // _` || '_ \ | || || | / _` |   | . ` | / _` || '_ \ | | / _` | / _` |
-    \  /| (_| || | | || || || || (_| |   | |\  || (_| || | | || || (_| || (_| |
-     \/  \__,_||_| |_||_||_||_| \__,_|   |_| \_| \__,_||_| |_||_| \__,_| \__,_|                                                                                                                                                                                                                               
-EOF
-echo -e "\e[0m"  # 重置颜色
-echo -e "\e[1;36m  小智服务端全量部署一键安装脚本 Ver 0.2 2025年11月16日更新 \e[0m\n"
-sleep 1
-
-# 检查并安装whiptail
-check_whiptail() {
-    if ! command -v whiptail &> /dev/null; then
-        echo "正在安装whiptail..."
-        apt update
-        apt install -y whiptail
-    fi
-}
-
-check_whiptail
-
-# 创建确认对话框
-whiptail --title "安装确认" --yesno "即将安装小智服务端，是否继续？" \
-  --yes-button "继续" --no-button "退出" 10 50
-
-# 根据用户选择执行操作
-case $? in
-  0)
-    ;;
-  1)
-    exit 1
-    ;;
-esac
-
-# 检查root权限
-if [ $EUID -ne 0 ]; then
-    whiptail --title "权限错误" --msgbox "请使用root权限运行本脚本" 10 50
-    exit 1
-fi
-
-# 检查系统版本
-if [ -f /etc/os-release ]; then
-    . /etc/os-release
-    if [ "$ID" != "debian" ] && [ "$ID" != "ubuntu" ]; then
-        whiptail --title "系统错误" --msgbox "该脚本只支持Debian/Ubuntu系统执行" 10 60
-        exit 1
-    fi
-else
-    whiptail --title "系统错误" --msgbox "无法确定系统版本，该脚本只支持Debian/Ubuntu系统执行" 10 60
-    exit 1
-fi
-
-# 下载配置文件函数
-check_and_download() {
-    local filepath=$1
-    local url=$2
-    if [ ! -f "$filepath" ]; then
-        if ! curl -fL --progress-bar "$url" -o "$filepath"; then
-            whiptail --title "错误" --msgbox "${filepath}文件下载失败" 10 50
-            exit 1
-        fi
-    else
-        echo "${filepath}文件已存在，跳过下载"
-    fi
-}
-
-# 执行docker compose命令的函数，优先使用docker compose，失败时回退到docker-compose
-docker_compose() {
-    local cmd="docker compose $@"
-    local fallback_cmd="docker-compose $@"
-    
-    echo "尝试执行: $cmd"
-    # 尝试使用docker compose命令
-    if $cmd; then
-        echo "docker compose命令执行成功"
-        return 0
-    else
-        echo "docker compose命令执行失败，尝试回退到docker-compose"
-        # 回退到docker-compose命令
-        if $fallback_cmd; then
-            echo "docker-compose命令执行成功"
-            return 0
-        else
-            echo "docker-compose命令执行失败"
-            return 1
-        fi
-    fi
-}
-
-# 从多个接口获取公网IP地址的函数，实现轮流查询机制
-get_public_ip() {
-    # 定义IP查询接口列表
-    local ip_services=(
-        "https://myip.ipip.net"
-        "https://ddns.oray.com/checkip"
-        "https://ip.3322.net"
-        "https://4.ipw.cn"
-        "https://v4.yinghualuo.cn/bejson"
-    )
-    
-    # 尝试每个服务，直到成功获取IP
-    for service in "${ip_services[@]}"; do        
-        # 使用curl获取响应，设置超时时间为5秒
-        local response
-        response=$(curl -s -m 5 "$service" 2>/dev/null)
-        
-        # 检查curl是否成功执行
-        if [ $? -eq 0 ] && [ -n "$response" ]; then
-            # 尝试从响应中提取IPv4地址
-            local ip
-            
-            # 根据不同服务的响应格式提取IP
-            case "$service" in
-                "https://myip.ipip.net")
-                    # 格式示例: 当前 IP：192.168.1.1  来自于：中国 北京 北京 联通
-                    ip=$(echo "$response" | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
-                    ;;
-                "https://ddns.oray.com/checkip")
-                    # 格式示例: Current IP Address: 192.168.1.1
-                    ip=$(echo "$response" | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
-                    ;;
-                "https://ip.3322.net")
-                    # 格式示例: 192.168.1.1
-                    ip=$(echo "$response" | grep -oE '^([0-9]{1,3}\.){3}[0-9]{1,3}$' | head -1)
-                    ;;
-                "https://4.ipw.cn")
-                    # 格式示例: 192.168.1.1
-                    ip=$(echo "$response" | grep -oE '^([0-9]{1,3}\.){3}[0-9]{1,3}$' | head -1)
-                    ;;
-                "https://v4.yinghualuo.cn/bejson")
-                    # 格式示例: {"is_ipv6":false,"ip":"192.168.1.1","location":"..."}
-                    ip=$(echo "$response" | grep -oE '"ip":"([0-9]{1,3}\.){3}[0-9]{1,3}"' | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
-                    ;;
-            esac
-            
-            # 验证提取到的是否为有效的IPv4地址
-            if [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-                echo "$ip"
-                return 0
-            fi
-        fi
-    done
-    
-    # 如果所有服务都失败，回退到本地IP
-    local local_ip=$(hostname -I | awk '{print $1}')
-    echo "$local_ip"
-    return 1
-}
-
-# 检查是否已安装
-check_installed() {
-    # 检查目录是否存在且非空
-    if [ -d "/opt/xiaozhi-server/" ] && [ "$(ls -A /opt/xiaozhi-server/)" ]; then
-        DIR_CHECK=1
-    else
-        DIR_CHECK=0
-    fi
-    
-    # 检查容器是否存在
-    if docker inspect xiaozhi-esp32-server > /dev/null 2>&1; then
-        CONTAINER_CHECK=1
-    else
-        CONTAINER_CHECK=0
-    fi
-    
-    # 两次检查都通过
-    if [ $DIR_CHECK -eq 1 ] && [ $CONTAINER_CHECK -eq 1 ]; then
-        return 0  # 已安装
-    else
-        return 1  # 未安装
-    fi
-}
-
-# 更新相关
-if check_installed; then
-    if whiptail --title "已安装检测" --yesno "检测到小智服务端已安装，是否进行升级？" 10 60; then
-        # 用户选择升级，执行清理操作
-        echo "开始升级操作..."
-        
-        # 停止并移除所有docker-compose服务
-        docker_compose -f /opt/xiaozhi-server/docker-compose_all.yml down
-        
-        # 停止并删除特定容器（考虑容器可能不存在的情况）
-        containers=(
-            "xiaozhi-esp32-server"
-            "xiaozhi-esp32-server-web"
-            "xiaozhi-esp32-server-db"
-            "xiaozhi-esp32-server-redis"
-        )
-        
-        for container in "${containers[@]}"; do
-            if docker ps -a --format '{{.Names}}' | grep -q "^${container}$"; then
-                docker stop "$container" >/dev/null 2>&1 && \
-                docker rm "$container" >/dev/null 2>&1 && \
-                echo "成功移除容器: $container"
-            else
-                echo "容器不存在，跳过: $container"
-            fi
-        done
-        
-        # 删除特定镜像（考虑镜像可能不存在的情况）
-        images=(
-            "ghcr.nju.edu.cn/xinnan-tech/xiaozhi-esp32-server:server_latest"
-            "ghcr.nju.edu.cn/xinnan-tech/xiaozhi-esp32-server:web_latest"
-        )
-        
-        for image in "${images[@]}"; do
-            if docker images --format '{{.Repository}}:{{.Tag}}' | grep -q "^${image}$"; then
-                docker rmi "$image" >/dev/null 2>&1 && \
-                echo "成功删除镜像: $image"
-            else
-                echo "镜像不存在，跳过: $image"
-            fi
-        done
-        
-        echo "所有清理操作完成"
-        
-        # 备份原有配置文件
-        mkdir -p /opt/xiaozhi-server/backup/
-        if [ -f /opt/xiaozhi-server/data/.config.yaml ]; then
-            cp /opt/xiaozhi-server/data/.config.yaml /opt/xiaozhi-server/backup/.config.yaml
-            echo "已备份原有配置文件到 /opt/xiaozhi-server/backup/.config.yaml"
-        fi
-        
-        # 下载最新版配置文件
-        check_and_download "/opt/xiaozhi-server/docker-compose_all.yml" "https://ghfast.top/https://raw.githubusercontent.com/xinnan-tech/xiaozhi-esp32-server/refs/heads/main/main/xiaozhi-server/docker-compose_all.yml"
-        check_and_download "/opt/xiaozhi-server/data/.config.yaml" "https://ghfast.top/https://raw.githubusercontent.com/xinnan-tech/xiaozhi-esp32-server/refs/heads/main/main/xiaozhi-server/config_from_api.yaml"
-        
-        # 启动Docker服务
-        echo "开始启动最新版本服务..."
-        # 升级完成后标记，跳过后续下载步骤
-        UPGRADE_COMPLETED=1
-        docker_compose -f /opt/xiaozhi-server/docker-compose_all.yml up -d
-    else
-          whiptail --title "跳过升级" --msgbox "已取消升级，将继续使用当前版本。" 10 50
-          # 跳过升级，继续执行后续安装流程
-    fi
-fi
 
 
-# 检查curl安装
-if ! command -v curl &> /dev/null; then
-    echo "------------------------------------------------------------"
-    echo "未检测到curl，正在安装..."
-    apt update
-    apt install -y curl
-else
-    echo "------------------------------------------------------------"
-    echo "curl已安装，跳过安装步骤"
-fi
+  <head>
+    <meta charset="utf-8">
+  <link rel="dns-prefetch" href="https://github.githubassets.com">
+  <link rel="dns-prefetch" href="https://avatars.githubusercontent.com">
+  <link rel="dns-prefetch" href="https://github-cloud.s3.amazonaws.com">
+  <link rel="dns-prefetch" href="https://user-images.githubusercontent.com/">
+  <link rel="preconnect" href="https://github.githubassets.com" crossorigin>
+  <link rel="preconnect" href="https://avatars.githubusercontent.com">
 
-# 检查Docker安装
-if ! command -v docker &> /dev/null; then
-    echo "------------------------------------------------------------"
-    echo "未检测到Docker，正在安装..."
-    
-    # 使用国内镜像源替代官方源
-    DISTRO=$(lsb_release -cs)
-    MIRROR_URL="https://mirrors.aliyun.com/docker-ce/linux/ubuntu"
-    GPG_URL="https://mirrors.aliyun.com/docker-ce/linux/ubuntu/gpg"
-    
-    # 安装基础依赖
-    apt update
-    apt install -y apt-transport-https ca-certificates curl software-properties-common gnupg
-    
-    # 创建密钥目录并添加国内镜像源密钥
-    mkdir -p /etc/apt/keyrings
-    curl -fsSL "$GPG_URL" | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-    
-    # 添加国内镜像源
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] $MIRROR_URL $DISTRO stable" \
-        > /etc/apt/sources.list.d/docker.list
-    
-    # 添加备用官方源密钥（避免国内源密钥验证失败）
-    apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 7EA0A9C3F273FCD8 2>/dev/null || \
-    echo "警告：部分密钥添加失败，继续尝试安装..."
-    
-    # 安装Docker
-    apt update
-    apt install -y docker-ce docker-ce-cli containerd.io
-    
-    # 启动服务
-    systemctl start docker
-    systemctl enable docker
-    
-    # 检查是否安装成功
-    if docker --version; then
-        echo "------------------------------------------------------------"
-        echo "Docker安装完成！"
-    else
-        whiptail --title "错误" --msgbox "Docker安装失败，请检查日志。" 10 50
-        exit 1
-    fi
-else
-    echo "Docker已安装，跳过安装步骤"
-fi
+  
 
-# Docker镜像源配置
-MIRROR_OPTIONS=(
-    "1" "轩辕镜像"
-    "2" "毫秒镜像"
-    "3" "腾讯云镜像源"
-    "4" "中科大镜像源"
-    "5" "网易163镜像源"
-    "6" "华为云镜像源"
-    "7" "阿里云镜像源"
-    "8" "自定义镜像源"
-    "9" "跳过配置"
-)
 
-MIRROR_CHOICE=$(whiptail --title "选择Docker镜像源" --menu "请选择要使用的Docker镜像源" 20 60 10 \
-"${MIRROR_OPTIONS[@]}" 3>&1 1>&2 2>&3) || {
-    echo "用户取消选择，退出脚本"
-    exit 1
-}
+  <link crossorigin="anonymous" media="all" rel="stylesheet" href="https://github.githubassets.com/assets/light-dac525bbd821.css" /><link crossorigin="anonymous" media="all" rel="stylesheet" href="https://github.githubassets.com/assets/dark-784387e86ac0.css" /><link data-color-theme="light_high_contrast" crossorigin="anonymous" media="all" rel="stylesheet" data-href="https://github.githubassets.com/assets/light_high_contrast-56ccf4057897.css" /><link data-color-theme="light_colorblind" crossorigin="anonymous" media="all" rel="stylesheet" data-href="https://github.githubassets.com/assets/light_colorblind-0e24752a7d2b.css" /><link data-color-theme="light_colorblind_high_contrast" crossorigin="anonymous" media="all" rel="stylesheet" data-href="https://github.githubassets.com/assets/light_colorblind_high_contrast-412af2517363.css" /><link data-color-theme="light_tritanopia" crossorigin="anonymous" media="all" rel="stylesheet" data-href="https://github.githubassets.com/assets/light_tritanopia-6186e83663dc.css" /><link data-color-theme="light_tritanopia_high_contrast" crossorigin="anonymous" media="all" rel="stylesheet" data-href="https://github.githubassets.com/assets/light_tritanopia_high_contrast-9d33c7aea2e7.css" /><link data-color-theme="dark_high_contrast" crossorigin="anonymous" media="all" rel="stylesheet" data-href="https://github.githubassets.com/assets/dark_high_contrast-79bd5fd84a86.css" /><link data-color-theme="dark_colorblind" crossorigin="anonymous" media="all" rel="stylesheet" data-href="https://github.githubassets.com/assets/dark_colorblind-75db11311555.css" /><link data-color-theme="dark_colorblind_high_contrast" crossorigin="anonymous" media="all" rel="stylesheet" data-href="https://github.githubassets.com/assets/dark_colorblind_high_contrast-f2c1045899a2.css" /><link data-color-theme="dark_tritanopia" crossorigin="anonymous" media="all" rel="stylesheet" data-href="https://github.githubassets.com/assets/dark_tritanopia-f46d293c6ff3.css" /><link data-color-theme="dark_tritanopia_high_contrast" crossorigin="anonymous" media="all" rel="stylesheet" data-href="https://github.githubassets.com/assets/dark_tritanopia_high_contrast-e4b5684db29d.css" /><link data-color-theme="dark_dimmed" crossorigin="anonymous" media="all" rel="stylesheet" data-href="https://github.githubassets.com/assets/dark_dimmed-72c58078e707.css" /><link data-color-theme="dark_dimmed_high_contrast" crossorigin="anonymous" media="all" rel="stylesheet" data-href="https://github.githubassets.com/assets/dark_dimmed_high_contrast-956cb5dfcb85.css" />
 
-case $MIRROR_CHOICE in
-    1) MIRROR_URL="https://docker.xuanyuan.me" ;; 
-    2) MIRROR_URL="https://docker.1ms.run" ;; 
-    3) MIRROR_URL="https://mirror.ccs.tencentyun.com" ;; 
-    4) MIRROR_URL="https://docker.mirrors.ustc.edu.cn" ;; 
-    5) MIRROR_URL="https://hub-mirror.c.163.com" ;; 
-    6) MIRROR_URL="https://05f073ad3c0010ea0f4bc00b7105ec20.mirror.swr.myhuaweicloud.com" ;; 
-    7) MIRROR_URL="https://registry.aliyuncs.com" ;; 
-    8) MIRROR_URL=$(whiptail --title "自定义镜像源" --inputbox "请输入完整的镜像源URL:\n例如: https://docker.example.com" 10 60 3>&1 1>&2 2>&3) ;; 
-    9) MIRROR_URL="" ;; 
-esac
-
-if [ -n "$MIRROR_URL" ]; then
-    mkdir -p /etc/docker
-    if [ -f /etc/docker/daemon.json ]; then
-        cp /etc/docker/daemon.json /etc/docker/daemon.json.bak
-    fi
-    cat > /etc/docker/daemon.json <<EOF
-{
-    "dns": ["8.8.8.8", "114.114.114.114"],
-    "registry-mirrors": ["$MIRROR_URL"]
-}
-EOF
-    whiptail --title "配置成功" --msgbox "已成功添加镜像源: $MIRROR_URL\n请按Enter键重启Docker服务并继续..." 12 60
-    echo "------------------------------------------------------------"
-    echo "开始重启Docker服务..."
-    systemctl restart docker.service
-fi
-
-# 创建安装目录
-echo "------------------------------------------------------------"
-echo "开始创建安装目录..."
-# 检查并创建数据目录
-if [ ! -d /opt/xiaozhi-server/data ]; then
-    mkdir -p /opt/xiaozhi-server/data
-    echo "已创建数据目录: /opt/xiaozhi-server/data"
-else
-    echo "目录xiaozhi-server/data已存在，跳过创建"
-fi
-
-# 检查并创建模型目录
-if [ ! -d /opt/xiaozhi-server/models/SenseVoiceSmall ]; then
-    mkdir -p /opt/xiaozhi-server/models/SenseVoiceSmall
-    echo "已创建模型目录: /opt/xiaozhi-server/models/SenseVoiceSmall"
-else
-    echo "目录xiaozhi-server/models/SenseVoiceSmall已存在，跳过创建"
-fi
-
-echo "------------------------------------------------------------"
-echo "开始下载语音识别模型"
-# 下载模型文件
-MODEL_PATH="/opt/xiaozhi-server/models/SenseVoiceSmall/model.pt"
-if [ ! -f "$MODEL_PATH" ]; then
-    (
-    for i in {1..20}; do
-        echo $((i*5))
-        sleep 0.1
-    done
-    ) | whiptail --title "下载中" --gauge "开始下载语音识别模型..." 10 60 0
-    curl -fL --progress-bar https://modelscope.cn/models/iic/SenseVoiceSmall/resolve/master/model.pt -o "$MODEL_PATH" || {
-        whiptail --title "错误" --msgbox "model.pt文件下载失败" 10 50
-        exit 1
+  <style type="text/css">
+    :root {
+      --tab-size-preference: 4;
     }
-else
-    echo "model.pt文件已存在，跳过下载"
-fi
 
-# 如果不是升级完成，才执行下载
-if [ -z "$UPGRADE_COMPLETED" ]; then
-    check_and_download "/opt/xiaozhi-server/docker-compose_all.yml" "https://ghfast.top/https://raw.githubusercontent.com/xinnan-tech/xiaozhi-esp32-server/refs/heads/main/main/xiaozhi-server/docker-compose_all.yml"
-    check_and_download "/opt/xiaozhi-server/data/.config.yaml" "https://ghfast.top/https://raw.githubusercontent.com/xinnan-tech/xiaozhi-esp32-server/refs/heads/main/main/xiaozhi-server/config_from_api.yaml"
-fi
+    pre, code {
+      tab-size: var(--tab-size-preference);
+    }
+  </style>
 
-# 启动Docker服务
-(
-echo "------------------------------------------------------------"
-echo "正在拉取Docker镜像..."
-echo "这可能需要几分钟时间，请耐心等待"
-docker_compose -f /opt/xiaozhi-server/docker-compose_all.yml up -d
+    <link crossorigin="anonymous" media="all" rel="stylesheet" href="https://github.githubassets.com/assets/primer-primitives-c37d781e2da5.css" />
+    <link crossorigin="anonymous" media="all" rel="stylesheet" href="https://github.githubassets.com/assets/primer-8bf3328b2828.css" />
+    <link crossorigin="anonymous" media="all" rel="stylesheet" href="https://github.githubassets.com/assets/global-df4c2156a48b.css" />
+    <link crossorigin="anonymous" media="all" rel="stylesheet" href="https://github.githubassets.com/assets/github-f7230554fa20.css" />
+  <link crossorigin="anonymous" media="all" rel="stylesheet" href="https://github.githubassets.com/assets/repository-5d735668c600.css" />
+<link crossorigin="anonymous" media="all" rel="stylesheet" href="https://github.githubassets.com/assets/code-9c9b8dc61e74.css" />
 
-if [ $? -ne 0 ]; then
-    whiptail --title "错误" --msgbox "Docker服务启动失败，请尝试更换镜像源后重新执行本脚本" 10 60
-    exit 1
-fi
+  
 
-echo "------------------------------------------------------------"
-echo "正在检查服务启动状态..."
-TIMEOUT=300
-START_TIME=$(date +%s)
-while true; do
-    CURRENT_TIME=$(date +%s)
-    if [ $((CURRENT_TIME - START_TIME)) -gt $TIMEOUT ]; then
-        whiptail --title "错误" --msgbox "服务启动超时，未在指定时间内找到预期日志内容" 10 60
-        exit 1
-    fi
+  <script type="application/json" id="client-env">{"locale":"en","featureFlags":["a11y_status_checks_ruleset","actions_custom_images_public_preview_visibility","actions_custom_images_storage_billing_ui_visibility","actions_enable_snapshot_keyword","actions_image_version_event","agent_session_retry_fetch_capi_on_401","allow_react_navs_in_turbo","alternate_user_config_repo","api_insights_show_missing_data_banner","arianotify_comprehensive_migration","arianotify_partial_migration","billing_hard_budget_limits_for_licenses","billing_ui_budget_pagination_enabled","client_version_header","codespaces_prebuild_region_target_update","coding_agent_model_selection","contentful_lp_footnotes","copilot_agent_cli_public_preview","copilot_agent_sessions_alive_updates","copilot_agent_task_list_v2","copilot_agent_tasks_btn_code_nav","copilot_agent_tasks_btn_code_view","copilot_agent_tasks_btn_code_view_lines","copilot_agent_tasks_btn_repo","copilot_agents_blankslate_mem_requests","copilot_api_agentic_issue_marshal_yaml","copilot_api_draft_issue_reference_with_project_id","copilot_api_github_draft_update_issue_skill","copilot_chat_agents_empty_state","copilot_chat_attach_multiple_images","copilot_chat_clear_model_selection_for_default_change","copilot_chat_disable_model_picker_while_streaming","copilot_chat_file_redirect","copilot_chat_input_commands","copilot_chat_opening_thread_switch","copilot_chat_reduce_quota_checks","copilot_chat_search_bar_redirect","copilot_chat_selection_attachments","copilot_chat_vision_in_claude","copilot_chat_vision_preview_gate","copilot_coding_agent_task_response","copilot_custom_copilots","copilot_custom_copilots_feature_preview","copilot_duplicate_thread","copilot_extensions_hide_in_dotcom_chat","copilot_extensions_removal_on_marketplace","copilot_features_raycast_logo","copilot_file_block_ref_matching","copilot_ftp_hyperspace_upgrade_prompt","copilot_icebreakers_experiment_dashboard","copilot_icebreakers_experiment_hyperspace","copilot_immersive_generate_thread_name_async","copilot_immersive_job_result_preview","copilot_immersive_structured_model_picker","copilot_immersive_task_hyperlinking","copilot_immersive_task_within_chat_thread","copilot_issue_list_show_more","copilot_linkable_file_paths","copilot_org_policy_page_focus_mode","copilot_pipes_code_nodes","copilot_pipes_github_graphql_nodes","copilot_premium_request_quotas","copilot_redirect_header_button_to_agents","copilot_security_alert_assignee_options","copilot_share_active_subthread","copilot_spaces_as_attachments","copilot_spaces_code_view","copilot_spaces_ga","copilot_spaces_individual_policies_ga","copilot_spaces_public_access_to_user_owned_spaces","copilot_spaces_read_access_to_user_owned_spaces","copilot_spaces_report_abuse","copilot_spark_empty_state","copilot_spark_handle_nil_friendly_name","copilot_spark_loading_webgl","copilot_stable_conversation_view","copilot_swe_agent_progress_commands","copilot_swe_agent_use_subagents","copilot_unconfigured_is_inherited","dashboard_indexeddb_caching","dashboard_universe_2025","dashboard_universe_2025_feedback_dialog","direct_to_salesforce","dom_node_counts","dotcom_chat_client_side_skills","enterprise_ai_controls","failbot_report_error_react_apps_on_page","fetch_graphql_improved_error_serialization","fgpat_permissions_selector_redesign","flex_cta_groups_mvp","global_nav_react_edit_status_dialog","global_nav_react_feature_preview","global_nav_react_teams_settings_page","global_nav_react_top_repos_api_caching","hide_groups_list_for_few_groups","hyperspace_2025_logged_out_batch_1","hyperspace_nudges_universe25_post_event","initial_per_page_pagination_updates","issue_fields_global_search","issue_fields_report_usage","issue_fields_timeline_events","issues_cca_assign_actor_with_agent","issues_expanded_file_types","issues_lazy_load_comment_box_suggestions","issues_react_bots_timeline_pagination","issues_react_chrome_container_query_fix","issues_react_client_side_caching_analytics","issues_react_include_bots_in_pickers","issues_react_prohibit_title_fallback","issues_react_ui_feedback","issues_report_sidebar_interactions","lifecycle_label_name_updates","link_contact_sales_swp_marketo","loops_service_graphql_execution","marketing_pages_search_explore_provider","memex_default_issue_create_repository","memex_grouped_by_edit_route","memex_mwl_filter_field_delimiter","memex_roadmap_drag_style","mission_control_use_body_html","new_traffic_page_banner","open_agent_session_in_vscode_insiders","open_agent_session_in_vscode_stable","pr_react_progressive_queue","pr_sfv_new_diff_fetch","projects_assignee_max_limit","react_compiler_diff_lines","react_compiler_markdown_editor","react_custom_partial_router","react_fetch_graphql_ignore_expected_errors","render_user_display_name","repos_insights_remove_new_url","repository_suggester_elastic_search","ruleset_deletion_confirmation","sample_network_conn_type","scheduled_reminders_updated_limits","site_calculator_actions_2025","site_features_copilot_universe","site_homepage_collaborate_video","site_homepage_contentful","site_homepage_eyebrow_banner","site_homepage_universe_animations","site_msbuild_webgl_hero","spark_improve_image_upload","spark_prompt_secret_scanning","swe_agent_member_requests","swe_agent_member_requests_agent_panel","viewscreen_sandbox","webp_support","workbench_iteration_keyboard_navigation","workbench_store_readonly"],"login":"iiml33","copilotApiOverrideUrl":"https://api.individual.githubcopilot.com"}</script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/wp-runtime-864285a33a77.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/913-ca2305638c53.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/6488-de87864e6818.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/environment-b3d48626cc6e.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/69676-3e4d0020216a.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/43784-4652ae97a661.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/4712-6fc930a63a4b.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/81028-5b8c5e07a4fa.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/74911-45f1b742b847.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/91853-2ed22fb46437.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/78143-31968346cf4c.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/52430-2f44a4a36933.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/github-elements-4877027ad5a6.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/element-registry-fba1d9f36c38.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/react-lib-760965ba27bb.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/react-core-c947eff3bbc1.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/28546-ee41c9313871.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/17688-a9e16fb5ed13.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/2869-a4ba8f17edb3.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/70191-5122bf27bf3e.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/7332-5ea4ccf72018.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/3561-5983d983527e.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/24077-adc459723b71.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/51519-d3c416bc1076.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/67310-41f6def2eebb.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/96384-750ef5263abe.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/19718-676a65610616.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/behaviors-212bb3cfecca.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/48011-3090463662a8.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/notifications-global-54f7f2032e0d.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/31615-d53294c4a84f.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/14155-c583ca76c604.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/code-menu-fa1d4025778b.js" defer="defer"></script>
+  
+  <script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/primer-react-815713ed994b.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/octicons-react-a215e6ee021a.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/31475-5e512a21dfc3.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/48775-3cc79d2cd30e.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/42892-341e79a04903.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/23832-db66abd83e08.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/99418-9d4961969e0d.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/33915-05ba9b3edc31.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/96537-8e29101f7d81.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/51220-ec5733320b36.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/14439-3d6b9eed7383.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/59403-2d4e3c04c240.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/9288-386d049b3200.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/25407-0bcfbb5d10a7.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/40771-ec590ac72545.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/66990-9c7310043c38.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/29665-96a2ad6dd82d.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/6623-49cffd543783.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/3774-304bab512880.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/69087-9e6f78a2c194.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/36584-f9bac491d6d1.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/29806-1944f1cad77b.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/97221-2993727ece58.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/react-code-view-2d3374ccc518.js" defer="defer"></script>
+<link crossorigin="anonymous" media="all" rel="stylesheet" href="https://github.githubassets.com/assets/primer-react.e5c2e144a68844beefef.module.css" />
+<link crossorigin="anonymous" media="all" rel="stylesheet" href="https://github.githubassets.com/assets/react-code-view.04eaa83910e6b1ee3958.module.css" />
+
+
+  <title>Install_xiaozhi-server/install_whiptail.sh at main · iiml33/Install_xiaozhi-server</title>
+
+
+
+  <meta name="route-pattern" content="/:user_id/:repository/blob/*name(/*path)" data-turbo-transient>
+  <meta name="route-controller" content="blob" data-turbo-transient>
+  <meta name="route-action" content="show" data-turbo-transient>
+  <meta name="fetch-nonce" content="v2:f8d1a6c6-99a7-2de0-c452-88ae43c728a8">
+
     
-    if docker logs xiaozhi-esp32-server-web 2>&1 | grep -q "Started AdminApplication in"; then
-        break
-    fi
-    sleep 1
-done
+  <meta name="current-catalog-service-hash" content="f3abb0cc802f3d7b95fc8762b94bdcb13bf39634c40c357301c4aa1d67a256fb">
 
-    echo "服务端启动成功！正在完成配置..."
-    echo "正在启动服务..."
-    docker_compose -f /opt/xiaozhi-server/docker-compose_all.yml up -d
-    echo "服务启动完成！"
-)
 
-# 密钥配置
+  <meta name="request-id" content="B591:272FBD:20D899A:25874A5:694810D9" data-turbo-transient="true" /><meta name="html-safe-nonce" content="7c8bed0e79c41d1f0011e85ad3c3f68586c7af32583a5c1eb650fe5debddf5a0" data-turbo-transient="true" /><meta name="visitor-payload" content="eyJyZWZlcnJlciI6Imh0dHBzOi8vZ2l0aHViLmNvbS9paW1sMzMvSW5zdGFsbF94aWFvemhpLXNlcnZlciIsInJlcXVlc3RfaWQiOiJCNTkxOjI3MkZCRDoyMEQ4OTlBOjI1ODc0QTU6Njk0ODEwRDkiLCJ2aXNpdG9yX2lkIjoiNTIxNDAzMzYwNTUzNDYyNTk4OSIsInJlZ2lvbl9lZGdlIjoic291dGhlYXN0YXNpYSIsInJlZ2lvbl9yZW5kZXIiOiJpYWQifQ==" data-turbo-transient="true" /><meta name="visitor-hmac" content="a9fff7448777c82395c394b3452e300c54a2d17a97966504b496092b0433fa93" data-turbo-transient="true" />
 
-# 获取服务器公网地址
-PUBLIC_IP=$(get_public_ip)
-whiptail --title "配置服务器密钥" --msgbox "请使用浏览器，访问下方链接，打开智控台并注册账号: \
 
-内网地址：http://127.0.0.1:8002/ \
+    <meta name="hovercard-subject-tag" content="repository:1115497539" data-turbo-transient>
 
-公网地址：http://$PUBLIC_IP:8002/ (若是云服务器请在服务器安全组放行端口 8000 8001 8002)。\
 
-注册的第一个用户即是超级管理员，以后注册的用户都是普通用户。普通用户只能绑定设备和配置智能体; 超级管理员可以进行模型管理、用户管理、参数配置等功能。\
+  <meta name="github-keyboard-shortcuts" content="repository,source-code,file-tree,copilot" data-turbo-transient="true" />
+  
 
-注册好后请按Enter键继续" 18 70
-SECRET_KEY=$(whiptail --title "配置服务器密钥" --inputbox "请使用超级管理员账号登录智控台\n内网地址：http://127.0.0.1:8002/ \
-公网地址：http://$PUBLIC_IP:8002/\n在顶部菜单 参数字典 → 参数管理 找到参数编码: server.secret (服务器密钥) \
-复制该参数值并输入到下面输入框\n\n请输入密钥(留空则跳过配置):" 15 60 3>&1 1>&2 2>&3)
+  <meta name="selected-link" value="repo_source" data-turbo-transient>
+  <link rel="assets" href="https://github.githubassets.com/">
 
-if [ -n "$SECRET_KEY" ]; then
-    python3 -c "
-import sys, yaml; 
-config_path = '/opt/xiaozhi-server/data/.config.yaml'; 
-with open(config_path, 'r') as f: 
-    config = yaml.safe_load(f) or {}; 
-config['manager-api'] = {'url': 'http://xiaozhi-esp32-server-web:8002/xiaozhi', 'secret': '$SECRET_KEY'}; 
-with open(config_path, 'w') as f: 
-    yaml.dump(config, f); 
-"
-    docker restart xiaozhi-esp32-server
-fi
+    <meta name="google-site-verification" content="Apib7-x98H0j5cPqHWwSMm6dNU4GmODRoqxLiDzdx9I">
 
-# 修复日志文件获取不到ws的问题，改为硬编码
-# 复用之前获取的PUBLIC_IP变量，避免重复调用API
-whiptail --title "安装完成！" --msgbox "\
-服务端相关地址如下：\n\
-公网地址:\n\
-管理后台: http://$PUBLIC_IP:8002\n\
-OTA: http://$PUBLIC_IP:8002/xiaozhi/ota/\n\
-视觉分析接口: http://$PUBLIC_IP:8003/mcp/vision/explain\n\
-WebSocket: ws://$PUBLIC_IP:8000/xiaozhi/v1/\n\
-\n安装完毕！感谢您的使用！\n按Enter键退出..." 20 70
+<meta name="octolytics-url" content="https://collector.github.com/github/collect" /><meta name="octolytics-actor-id" content="188140366" /><meta name="octolytics-actor-login" content="iiml33" /><meta name="octolytics-actor-hash" content="38c5d752aa696cdee2ad1adc959c7e93225e0669f47625e4c00f9515c5d85951" />
+
+  <meta name="analytics-location" content="/&lt;user-name&gt;/&lt;repo-name&gt;/blob/show" data-turbo-transient="true" />
+
+  
+
+
+
+
+    <meta name="user-login" content="iiml33">
+
+  <link rel="sudo-modal" href="/sessions/sudo_modal">
+
+    <meta name="viewport" content="width=device-width">
+
+    
+
+      <meta name="description" content="小智AI服务端全自动一键部署脚本. Contribute to iiml33/Install_xiaozhi-server development by creating an account on GitHub.">
+
+      <link rel="search" type="application/opensearchdescription+xml" href="/opensearch.xml" title="GitHub">
+
+    <link rel="fluid-icon" href="https://github.com/fluidicon.png" title="GitHub">
+    <meta property="fb:app_id" content="1401488693436528">
+    <meta name="apple-itunes-app" content="app-id=1477376905, app-argument=https://github.com/iiml33/Install_xiaozhi-server/blob/main/install_whiptail.sh" />
+
+      <meta name="twitter:image" content="https://opengraph.githubassets.com/293d678416e4ae83648a0ad75bac8d053ed8df217d88f1ddc904d872bc3c712c/iiml33/Install_xiaozhi-server" /><meta name="twitter:site" content="@github" /><meta name="twitter:card" content="summary_large_image" /><meta name="twitter:title" content="Install_xiaozhi-server/install_whiptail.sh at main · iiml33/Install_xiaozhi-server" /><meta name="twitter:description" content="小智AI服务端全自动一键部署脚本. Contribute to iiml33/Install_xiaozhi-server development by creating an account on GitHub." />
+  <meta property="og:image" content="https://opengraph.githubassets.com/293d678416e4ae83648a0ad75bac8d053ed8df217d88f1ddc904d872bc3c712c/iiml33/Install_xiaozhi-server" /><meta property="og:image:alt" content="小智AI服务端全自动一键部署脚本. Contribute to iiml33/Install_xiaozhi-server development by creating an account on GitHub." /><meta property="og:image:width" content="1200" /><meta property="og:image:height" content="600" /><meta property="og:site_name" content="GitHub" /><meta property="og:type" content="object" /><meta property="og:title" content="Install_xiaozhi-server/install_whiptail.sh at main · iiml33/Install_xiaozhi-server" /><meta property="og:url" content="https://github.com/iiml33/Install_xiaozhi-server/blob/main/install_whiptail.sh" /><meta property="og:description" content="小智AI服务端全自动一键部署脚本. Contribute to iiml33/Install_xiaozhi-server development by creating an account on GitHub." />
+  
+
+
+      <link rel="shared-web-socket" href="wss://alive.github.com/_sockets/u/188140366/ws?session=eyJ2IjoiVjMiLCJ1IjoxODgxNDAzNjYsInMiOjE4Nzg0MTk0NzksImMiOjE5Mzc1MjI5NzksInQiOjE3NjYzMzA1OTd9--05459bec0d58b9a0a98a0afb3c451ad02a4cbb049e45fea1177576588a2a32b6" data-refresh-url="/_alive" data-session-id="0a27e41db5397570023ca1fc7ae2274951d093dbdf96746dc411e3681fe6f143">
+      <link rel="shared-web-socket-src" href="/assets-cdn/worker/socket-worker-2a038060e454.js">
+
+
+      <meta name="hostname" content="github.com">
+
+
+      <meta name="keyboard-shortcuts-preference" content="all">
+      <meta name="hovercards-preference" content="true">
+      <meta name="announcement-preference-hovercard" content="true">
+
+        <meta name="expected-hostname" content="github.com">
+
+
+  <meta http-equiv="x-pjax-version" content="0c2e148f1f1f0a14927a1e41d6ee1eb51ceb82e5a7b698beb8146cd772e4ebfb" data-turbo-track="reload">
+  <meta http-equiv="x-pjax-csp-version" content="21a43568025709b66240454fc92d4f09335a96863f8ab1c46b4a07f6a5b67102" data-turbo-track="reload">
+  <meta http-equiv="x-pjax-css-version" content="03da391a01750e54015d0ebd9e7e968879f966ef76d8a697be72ccbc12abac55" data-turbo-track="reload">
+  <meta http-equiv="x-pjax-js-version" content="147bba4c962912735b3b4ab5d236660915db14a8d0a11ad3b1f2f559e89d1912" data-turbo-track="reload">
+
+  <meta name="turbo-cache-control" content="no-preview" data-turbo-transient="">
+
+      <meta name="turbo-cache-control" content="no-cache" data-turbo-transient>
+
+    <meta data-hydrostats="publish">
+
+  <meta name="go-import" content="github.com/iiml33/Install_xiaozhi-server git https://github.com/iiml33/Install_xiaozhi-server.git">
+
+  <meta name="octolytics-dimension-user_id" content="188140366" /><meta name="octolytics-dimension-user_login" content="iiml33" /><meta name="octolytics-dimension-repository_id" content="1115497539" /><meta name="octolytics-dimension-repository_nwo" content="iiml33/Install_xiaozhi-server" /><meta name="octolytics-dimension-repository_public" content="true" /><meta name="octolytics-dimension-repository_is_fork" content="true" /><meta name="octolytics-dimension-repository_parent_id" content="1025761538" /><meta name="octolytics-dimension-repository_parent_nwo" content="VanillaNahida/Install_xiaozhi-server" /><meta name="octolytics-dimension-repository_network_root_id" content="1025761538" /><meta name="octolytics-dimension-repository_network_root_nwo" content="VanillaNahida/Install_xiaozhi-server" />
+
+
+
+    
+
+    <meta name="turbo-body-classes" content="logged-in env-production page-responsive">
+  <meta name="disable-turbo" content="false">
+
+
+  <meta name="browser-stats-url" content="https://api.github.com/_private/browser/stats">
+
+  <meta name="browser-errors-url" content="https://api.github.com/_private/browser/errors">
+
+  <meta name="release" content="4dcda4be6f0264e76733a62362ca5d1a86b801fa">
+  <meta name="ui-target" content="full">
+
+  <link rel="mask-icon" href="https://github.githubassets.com/assets/pinned-octocat-093da3e6fa40.svg" color="#000000">
+  <link rel="alternate icon" class="js-site-favicon" type="image/png" href="https://github.githubassets.com/favicons/favicon.png">
+  <link rel="icon" class="js-site-favicon" type="image/svg+xml" href="https://github.githubassets.com/favicons/favicon.svg" data-base-href="https://github.githubassets.com/favicons/favicon">
+
+<meta name="theme-color" content="#1e2327">
+<meta name="color-scheme" content="light dark" />
+
+
+  <link rel="manifest" href="/manifest.json" crossOrigin="use-credentials">
+
+  </head>
+
+  <body class="logged-in env-production page-responsive" style="word-wrap: break-word;" >
+    <div data-turbo-body class="logged-in env-production page-responsive" style="word-wrap: break-word;" >
+      <div id="__primerPortalRoot__" role="region" style="z-index: 1000; position: absolute; width: 100%;" data-turbo-permanent></div>
+      
+
+
+
+    <div class="position-relative header-wrapper js-header-wrapper ">
+      <a href="#start-of-content" data-skip-target-assigned="false" class="p-3 color-bg-accent-emphasis color-fg-on-emphasis show-on-focus js-skip-to-content">Skip to content</a>
+
+      <span data-view-component="true" class="progress-pjax-loader Progress position-fixed width-full">
+    <span style="width: 0%;" data-view-component="true" class="Progress-item progress-pjax-loader-bar left-0 top-0 color-bg-accent-emphasis"></span>
+</span>      
+      
+      <link crossorigin="anonymous" media="all" rel="stylesheet" href="https://github.githubassets.com/assets/primer-react.e5c2e144a68844beefef.module.css" />
+<link crossorigin="anonymous" media="all" rel="stylesheet" href="https://github.githubassets.com/assets/keyboard-shortcuts-dialog.29aaeaafa90f007c6f61.module.css" />
+
+<react-partial
+  partial-name="keyboard-shortcuts-dialog"
+  data-ssr="false"
+  data-attempted-ssr="false"
+  data-react-profiling="false"
+>
+  
+  <script type="application/json" data-target="react-partial.embeddedData">{"props":{"docsUrl":"https://docs.github.com/get-started/accessibility/keyboard-shortcuts"}}</script>
+  <div data-target="react-partial.reactRoot"></div>
+</react-partial>
+
+
+
+
+
+      
+
+          
+
+                  <header class="AppHeader" role="banner">
+      <h2 class="sr-only">Navigation Menu</h2>
+
+
+        
+
+        <div class="AppHeader-globalBar pb-2 js-global-bar">
+          <div class="AppHeader-globalBar-start responsive-context-region">
+            <div class="">
+                      <react-partial-anchor>
+        <button data-target="react-partial-anchor.anchor" aria-label="Open global navigation menu" show_tooltip="false" type="button" data-view-component="true" class="AppHeader-button Button--secondary Button--medium Button p-0 color-fg-muted">  <span class="Button-content">
+    <span class="Button-label"><svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-three-bars">
+    <path d="M1 2.75A.75.75 0 0 1 1.75 2h12.5a.75.75 0 0 1 0 1.5H1.75A.75.75 0 0 1 1 2.75Zm0 5A.75.75 0 0 1 1.75 7h12.5a.75.75 0 0 1 0 1.5H1.75A.75.75 0 0 1 1 7.75ZM1.75 12h12.5a.75.75 0 0 1 0 1.5H1.75a.75.75 0 0 1 0-1.5Z"></path>
+</svg></span>
+  </span>
+</button>
+        <template data-target="react-partial-anchor.template">
+          <link crossorigin="anonymous" media="all" rel="stylesheet" href="https://github.githubassets.com/assets/primer-react.e5c2e144a68844beefef.module.css" />
+<link crossorigin="anonymous" media="all" rel="stylesheet" href="https://github.githubassets.com/assets/45961.330bb3cbfabc52ef2584.module.css" />
+<link crossorigin="anonymous" media="all" rel="stylesheet" href="https://github.githubassets.com/assets/global-nav-menu.e073f1462f845f41ad0d.module.css" />
+
+<react-partial
+  partial-name="global-nav-menu"
+  data-ssr="false"
+  data-attempted-ssr="false"
+  data-react-profiling="false"
+>
+  
+  <script type="application/json" data-target="react-partial.embeddedData">{"props":{"home":{"href":"/dashboard","hotkey":"g d"},"feed":{"show":false,"href":"/feed"},"issues":{"href":"/issues","hotkey":"g i"},"pulls":{"href":"/pulls","hotkey":"g p"},"contributedRepos":{"show":true,"href":"https://github.com/repos","hotkey":null},"projects":{"href":"/projects"},"discussions":{"show":true,"href":"/discussions"},"codespaces":{"show":true,"href":"https://github.com/codespaces"},"copilot":{"show":true,"href":"/copilot"},"spark":{"show":false,"href":null},"marketplace":{"show":true,"href":"/marketplace"},"mcp":{"show":true,"href":"https://github.com/mcp"},"explore":{"show":true,"href":"/explore"},"richContent":{"show":true,"contentUrl":"/_side-panels/global.json","repositoriesSearchUrl":"/_side-panel-items/global/repositories.json","teamsSearchUrl":"/_side-panel-items/global/teams.json"}}}</script>
+  <div data-target="react-partial.reactRoot"></div>
+</react-partial>
+
+
+        </template>
+      </react-partial-anchor>
+
+            </div>
+
+            <a class="AppHeader-logo ml-1 "
+              href="https://github.com/"
+              data-hotkey="g d"
+              aria-label="Homepage "
+              data-turbo="false"
+              data-analytics-event="{&quot;category&quot;:&quot;Header&quot;,&quot;action&quot;:&quot;go to dashboard&quot;,&quot;label&quot;:&quot;icon:logo&quot;}"
+            >
+              <svg height="32" aria-hidden="true" viewBox="0 0 24 24" version="1.1" width="32" data-view-component="true" class="octicon octicon-mark-github v-align-middle">
+    <path d="M12 1C5.923 1 1 5.923 1 12c0 4.867 3.149 8.979 7.521 10.436.55.096.756-.233.756-.522 0-.262-.013-1.128-.013-2.049-2.764.509-3.479-.674-3.699-1.292-.124-.317-.66-1.293-1.127-1.554-.385-.207-.936-.715-.014-.729.866-.014 1.485.797 1.691 1.128.99 1.663 2.571 1.196 3.204.907.096-.715.385-1.196.701-1.471-2.448-.275-5.005-1.224-5.005-5.432 0-1.196.426-2.186 1.128-2.956-.111-.275-.496-1.402.11-2.915 0 0 .921-.288 3.024 1.128a10.193 10.193 0 0 1 2.75-.371c.936 0 1.871.123 2.75.371 2.104-1.43 3.025-1.128 3.025-1.128.605 1.513.221 2.64.111 2.915.701.77 1.127 1.747 1.127 2.956 0 4.222-2.571 5.157-5.019 5.432.399.344.743 1.004.743 2.035 0 1.471-.014 2.654-.014 3.025 0 .289.206.632.756.522C19.851 20.979 23 16.854 23 12c0-6.077-4.922-11-11-11Z"></path>
+</svg>
+            </a>
+
+              <context-region-controller
+  class="AppHeader-context responsive-context-region"
+  data-max-items="5"
+  
+>
+  <div class="AppHeader-context-full">
+    <nav role="navigation" aria-label="GitHub Breadcrumb">
+      
+<context-region data-target="context-region-controller.contextRegion" role="list"  data-action="context-region-changed:context-region-controller#crumbsChanged">
+    <context-region-crumb
+      data-crumb-id="contextregion-usercrumb-iiml33"
+      data-targets="context-region.crumbs"
+      data-label="iiml33"
+      data-href="/iiml33"
+      data-pre-rendered
+      role="listitem"
+      
+    >
+      <a data-target="context-region-crumb.linkElement" data-analytics-event="{&quot;category&quot;:&quot;SiteHeaderComponent&quot;,&quot;action&quot;:&quot;context_region_crumb&quot;,&quot;label&quot;:&quot;iiml33&quot;,&quot;screen_size&quot;:&quot;full&quot;}" data-hovercard-type="user" data-hovercard-url="/users/iiml33/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="/iiml33" id="contextregion-usercrumb-iiml33-link" data-view-component="true" class="AppHeader-context-item">
+        <span data-target="context-region-crumb.labelElement" class="AppHeader-context-item-label ">
+          iiml33
+        </span>
+
+</a>
+      <context-region-divider data-target="context-region-crumb.dividerElement" data-pre-rendered >
+  <span class="AppHeader-context-item-separator">
+    <span class="sr-only">/</span>
+    <svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <path d="M10.956 1.27994L6.06418 14.7201L5 14.7201L9.89181 1.27994L10.956 1.27994Z" fill="currentcolor" />
+    </svg>
+  </span>
+</context-region-divider>
+
+    </context-region-crumb>
+
+      <li data-target="context-region-controller.overflowMenuContainer context-region.overflowMenuContainer" role="listitem" hidden>
+        <action-menu data-target="context-region-controller.overflowActionMenu" data-select-variant="none" data-view-component="true">
+  <focus-group direction="vertical" mnemonics retain>
+    <button id="action-menu-c076fe14-11d2-499e-8c7c-c15ad1c16893-button" popovertarget="action-menu-c076fe14-11d2-499e-8c7c-c15ad1c16893-overlay" aria-controls="action-menu-c076fe14-11d2-499e-8c7c-c15ad1c16893-list" aria-haspopup="true" aria-labelledby="tooltip-d03765a2-2617-4c27-a032-874c9bd56cbf" type="button" data-view-component="true" class="Button Button--iconOnly Button--secondary Button--medium">  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-kebab-horizontal Button-visual">
+    <path d="M8 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM1.5 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Zm13 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z"></path>
+</svg>
+</button><tool-tip id="tooltip-d03765a2-2617-4c27-a032-874c9bd56cbf" for="action-menu-c076fe14-11d2-499e-8c7c-c15ad1c16893-button" popover="manual" data-direction="s" data-type="label" data-view-component="true" class="sr-only position-absolute">Show more breadcrumb items</tool-tip>
+
+
+<anchored-position data-target="action-menu.overlay" id="action-menu-c076fe14-11d2-499e-8c7c-c15ad1c16893-overlay" anchor="action-menu-c076fe14-11d2-499e-8c7c-c15ad1c16893-button" align="start" side="outside-bottom" anchor-offset="normal" popover="auto" data-view-component="true">
+  <div data-view-component="true" class="Overlay Overlay--size-auto">
+    
+      <div data-view-component="true" class="Overlay-body Overlay-body--paddingNone">          <action-list>
+  <div data-view-component="true">
+    <ul aria-labelledby="action-menu-c076fe14-11d2-499e-8c7c-c15ad1c16893-button" id="action-menu-c076fe14-11d2-499e-8c7c-c15ad1c16893-list" role="menu" data-view-component="true" class="ActionListWrap--inset ActionListWrap">
+        <li hidden="hidden" data-crumb-id="contextregion-usercrumb-iiml33" data-targets="context-region.overflowCrumbs action-list.items" data-analytics-event="{&quot;category&quot;:&quot;SiteHeaderComponent&quot;,&quot;action&quot;:&quot;context_region_overflow_menu_crumb&quot;,&quot;label&quot;:&quot;global-navigation&quot;}" role="none" data-view-component="true" class="ActionListItem">
+    
+    
+    <a tabindex="-1" id="item-5c6ffcbd-89f0-43af-85b2-cf8b8a0cd18d" href="/iiml33" role="menuitem" data-view-component="true" class="ActionListContent">
+      
+        <span data-view-component="true" class="ActionListItem-label">
+          iiml33
+</span>      
+</a>
+  
+</li>
+        <li hidden="hidden" data-crumb-id="contextregion-repositorycrumb-install_xiaozhi-server" data-targets="context-region.overflowCrumbs action-list.items" data-analytics-event="{&quot;category&quot;:&quot;SiteHeaderComponent&quot;,&quot;action&quot;:&quot;context_region_overflow_menu_crumb&quot;,&quot;label&quot;:&quot;global-navigation&quot;}" role="none" data-view-component="true" class="ActionListItem">
+    
+    
+    <a tabindex="-1" id="item-8724afc2-eaa0-4962-9f65-fd0fa995d806" href="/iiml33/Install_xiaozhi-server" role="menuitem" data-view-component="true" class="ActionListContent">
+      
+        <span data-view-component="true" class="ActionListItem-label">
+          Install_xiaozhi-server
+</span>      
+</a>
+  
+</li>
+</ul>    
+</div></action-list>
+
+
+</div>
+      
+</div></anchored-position>  </focus-group>
+</action-menu>
+  <context-region-divider data-target="context-region-crumb.dividerElement" data-pre-rendered >
+  <span class="AppHeader-context-item-separator">
+    <span class="sr-only">/</span>
+    <svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <path d="M10.956 1.27994L6.06418 14.7201L5 14.7201L9.89181 1.27994L10.956 1.27994Z" fill="currentcolor" />
+    </svg>
+  </span>
+</context-region-divider>
+
+
+      </li>
+    <context-region-crumb
+      data-crumb-id="contextregion-repositorycrumb-install_xiaozhi-server"
+      data-targets="context-region.crumbs"
+      data-label="Install_xiaozhi-server"
+      data-href="/iiml33/Install_xiaozhi-server"
+      data-pre-rendered
+      role="listitem"
+      
+    >
+      <a data-target="context-region-crumb.linkElement" data-analytics-event="{&quot;category&quot;:&quot;SiteHeaderComponent&quot;,&quot;action&quot;:&quot;context_region_crumb&quot;,&quot;label&quot;:&quot;Install_xiaozhi-server&quot;,&quot;screen_size&quot;:&quot;full&quot;}" href="/iiml33/Install_xiaozhi-server" id="contextregion-repositorycrumb-install_xiaozhi-server-link" data-view-component="true" class="AppHeader-context-item">
+        <span data-target="context-region-crumb.labelElement" class="AppHeader-context-item-label ">
+          Install_xiaozhi-server
+        </span>
+
+</a>
+      <context-region-divider data-target="context-region-crumb.dividerElement" data-pre-rendered >
+  <span class="AppHeader-context-item-separator">
+    <span class="sr-only">/</span>
+    <svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <path d="M10.956 1.27994L6.06418 14.7201L5 14.7201L9.89181 1.27994L10.956 1.27994Z" fill="currentcolor" />
+    </svg>
+  </span>
+</context-region-divider>
+
+    </context-region-crumb>
+
+</context-region>
+
+    </nav>
+  </div>
+</context-region-controller>
+
+          </div>
+          <div class="AppHeader-globalBar-end">
+              <div class="AppHeader-search" >
+                  
+
+
+<qbsearch-input class="search-input" data-scope="repo:iiml33/Install_xiaozhi-server" data-custom-scopes-path="/search/custom_scopes" data-delete-custom-scopes-csrf="wJ8BseJlj05QtRpJ8aybAclwnFmpgBJAZpKbpiu2SoEa4leZgtZUjWI_jkGRkAhk_N_jOp4cr8v0CnzlBfKKZA" data-max-custom-scopes="10" data-header-redesign-enabled="true" data-initial-value="" data-blackbird-suggestions-path="/search/suggestions" data-jump-to-suggestions-path="/_graphql/GetSuggestedNavigationDestinations" data-current-repository="iiml33/Install_xiaozhi-server" data-current-org="" data-current-owner="iiml33" data-logged-in="true" data-copilot-chat-enabled="true" data-nl-search-enabled="false">
+  <div
+    class="search-input-container search-with-dialog position-relative d-flex flex-row flex-items-center height-auto color-bg-transparent border-0 color-fg-subtle mx-0"
+    data-action="click:qbsearch-input#searchInputContainerClicked"
+  >
+        
+              <button type="button" data-action="click:qbsearch-input#handleExpand" class="AppHeader-button AppHeader-search-whenNarrow" aria-label="Search or jump to…" aria-expanded="false" aria-haspopup="dialog">
+              <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-search">
+    <path d="M10.68 11.74a6 6 0 0 1-7.922-8.982 6 6 0 0 1 8.982 7.922l3.04 3.04a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215ZM11.5 7a4.499 4.499 0 1 0-8.997 0A4.499 4.499 0 0 0 11.5 7Z"></path>
+</svg>
+            </button>
+
+
+<div class="AppHeader-search-whenRegular">
+  <div class="AppHeader-search-wrap AppHeader-search-wrap--hasTrailing">
+    <div class="AppHeader-search-control AppHeader-search-control-overflow">
+      <label
+        for="AppHeader-searchInput"
+        aria-label="Search or jump to…"
+        class="AppHeader-search-visual--leading"
+      >
+        <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-search">
+    <path d="M10.68 11.74a6 6 0 0 1-7.922-8.982 6 6 0 0 1 8.982 7.922l3.04 3.04a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215ZM11.5 7a4.499 4.499 0 1 0-8.997 0A4.499 4.499 0 0 0 11.5 7Z"></path>
+</svg>
+      </label>
+
+                  <button
+              type="button"
+              data-target="qbsearch-input.inputButton"
+              data-action="click:qbsearch-input#handleExpand"
+              class="AppHeader-searchButton form-control text-left color-fg-subtle no-wrap"
+              data-hotkey="s,/"
+              data-analytics-event="{&quot;location&quot;:&quot;navbar&quot;,&quot;action&quot;:&quot;searchbar&quot;,&quot;context&quot;:&quot;global&quot;,&quot;tag&quot;:&quot;input&quot;,&quot;label&quot;:&quot;searchbar_input_global_navbar&quot;}"
+              aria-describedby="search-error-message-flash"
+            >
+              <div class="overflow-hidden">
+                <span id="qb-input-query" data-target="qbsearch-input.inputButtonText">
+                    Type <kbd class="AppHeader-search-kbd">/</kbd> to search
+                </span>
+              </div>
+            </button>
+
+    </div>
+
+
+  </div>
+</div>
+
+    <input type="hidden" name="type" class="js-site-search-type-field">
+
+    
+<div class="Overlay--hidden " data-modal-dialog-overlay>
+  <modal-dialog data-action="close:qbsearch-input#handleClose cancel:qbsearch-input#handleClose" data-target="qbsearch-input.searchSuggestionsDialog" role="dialog" id="search-suggestions-dialog" aria-modal="true" aria-labelledby="search-suggestions-dialog-header" data-view-component="true" class="Overlay Overlay--width-medium Overlay--height-auto">
+      <h1 id="search-suggestions-dialog-header" class="sr-only">Search code, repositories, users, issues, pull requests...</h1>
+    <div class="Overlay-body Overlay-body--paddingNone">
+      
+          <div data-view-component="true">        <div class="search-suggestions position-absolute width-full color-shadow-large border color-fg-default color-bg-default overflow-hidden d-flex flex-column query-builder-container"
+          style="border-radius: 12px;"
+          data-target="qbsearch-input.queryBuilderContainer"
+          hidden
+        >
+          <!-- '"` --><!-- </textarea></xmp> --></option></form><form id="query-builder-test-form" action="" accept-charset="UTF-8" method="get">
+  <query-builder data-target="qbsearch-input.queryBuilder" id="query-builder-query-builder-test" data-filter-key=":" data-view-component="true" class="QueryBuilder search-query-builder">
+    <div class="FormControl FormControl--fullWidth">
+      <label id="query-builder-test-label" for="query-builder-test" class="FormControl-label sr-only">
+        Search
+      </label>
+      <div
+        class="QueryBuilder-StyledInput width-fit "
+        data-target="query-builder.styledInput"
+      >
+          <span id="query-builder-test-leadingvisual-wrap" class="FormControl-input-leadingVisualWrap QueryBuilder-leadingVisualWrap">
+            <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-search FormControl-input-leadingVisual">
+    <path d="M10.68 11.74a6 6 0 0 1-7.922-8.982 6 6 0 0 1 8.982 7.922l3.04 3.04a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215ZM11.5 7a4.499 4.499 0 1 0-8.997 0A4.499 4.499 0 0 0 11.5 7Z"></path>
+</svg>
+          </span>
+        <div data-target="query-builder.styledInputContainer" class="QueryBuilder-StyledInputContainer">
+          <div
+            aria-hidden="true"
+            class="QueryBuilder-StyledInputContent"
+            data-target="query-builder.styledInputContent"
+          ></div>
+          <div class="QueryBuilder-InputWrapper">
+            <div aria-hidden="true" class="QueryBuilder-Sizer" data-target="query-builder.sizer"></div>
+            <input id="query-builder-test" name="query-builder-test" value="" autocomplete="off" type="text" role="combobox" spellcheck="false" aria-expanded="false" aria-describedby="validation-ca8ee2e6-49a2-4e7b-99ae-a79ada6938e0" data-target="query-builder.input" data-action="
+          input:query-builder#inputChange
+          blur:query-builder#inputBlur
+          keydown:query-builder#inputKeydown
+          focus:query-builder#inputFocus
+        " data-view-component="true" class="FormControl-input QueryBuilder-Input FormControl-medium" />
+          </div>
+        </div>
+          <span class="sr-only" id="query-builder-test-clear">Clear</span>
+          <button role="button" id="query-builder-test-clear-button" aria-labelledby="query-builder-test-clear query-builder-test-label" data-target="query-builder.clearButton" data-action="
+                click:query-builder#clear
+                focus:query-builder#clearButtonFocus
+                blur:query-builder#clearButtonBlur
+              " variant="small" hidden="hidden" type="button" data-view-component="true" class="Button Button--iconOnly Button--invisible Button--medium mr-1 px-2 py-0 d-flex flex-items-center rounded-1 color-fg-muted">  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-x-circle-fill Button-visual">
+    <path d="M2.343 13.657A8 8 0 1 1 13.658 2.343 8 8 0 0 1 2.343 13.657ZM6.03 4.97a.751.751 0 0 0-1.042.018.751.751 0 0 0-.018 1.042L6.94 8 4.97 9.97a.749.749 0 0 0 .326 1.275.749.749 0 0 0 .734-.215L8 9.06l1.97 1.97a.749.749 0 0 0 1.275-.326.749.749 0 0 0-.215-.734L9.06 8l1.97-1.97a.749.749 0 0 0-.326-1.275.749.749 0 0 0-.734.215L8 6.94Z"></path>
+</svg>
+</button>
+
+      </div>
+      <template id="search-icon">
+  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-search">
+    <path d="M10.68 11.74a6 6 0 0 1-7.922-8.982 6 6 0 0 1 8.982 7.922l3.04 3.04a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215ZM11.5 7a4.499 4.499 0 1 0-8.997 0A4.499 4.499 0 0 0 11.5 7Z"></path>
+</svg>
+</template>
+
+<template id="code-icon">
+  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-code">
+    <path d="m11.28 3.22 4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.749.749 0 0 1-1.275-.326.749.749 0 0 1 .215-.734L13.94 8l-3.72-3.72a.749.749 0 0 1 .326-1.275.749.749 0 0 1 .734.215Zm-6.56 0a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042L2.06 8l3.72 3.72a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L.47 8.53a.75.75 0 0 1 0-1.06Z"></path>
+</svg>
+</template>
+
+<template id="file-code-icon">
+  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-file-code">
+    <path d="M4 1.75C4 .784 4.784 0 5.75 0h5.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v8.586A1.75 1.75 0 0 1 14.25 15h-9a.75.75 0 0 1 0-1.5h9a.25.25 0 0 0 .25-.25V6h-2.75A1.75 1.75 0 0 1 10 4.25V1.5H5.75a.25.25 0 0 0-.25.25v2.5a.75.75 0 0 1-1.5 0Zm1.72 4.97a.75.75 0 0 1 1.06 0l2 2a.75.75 0 0 1 0 1.06l-2 2a.749.749 0 0 1-1.275-.326.749.749 0 0 1 .215-.734l1.47-1.47-1.47-1.47a.75.75 0 0 1 0-1.06ZM3.28 7.78 1.81 9.25l1.47 1.47a.751.751 0 0 1-.018 1.042.751.751 0 0 1-1.042.018l-2-2a.75.75 0 0 1 0-1.06l2-2a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042Zm8.22-6.218V4.25c0 .138.112.25.25.25h2.688l-.011-.013-2.914-2.914-.013-.011Z"></path>
+</svg>
+</template>
+
+<template id="history-icon">
+  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-history">
+    <path d="m.427 1.927 1.215 1.215a8.002 8.002 0 1 1-1.6 5.685.75.75 0 1 1 1.493-.154 6.5 6.5 0 1 0 1.18-4.458l1.358 1.358A.25.25 0 0 1 3.896 6H.25A.25.25 0 0 1 0 5.75V2.104a.25.25 0 0 1 .427-.177ZM7.75 4a.75.75 0 0 1 .75.75v2.992l2.028.812a.75.75 0 0 1-.557 1.392l-2.5-1A.751.751 0 0 1 7 8.25v-3.5A.75.75 0 0 1 7.75 4Z"></path>
+</svg>
+</template>
+
+<template id="repo-icon">
+  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-repo">
+    <path d="M2 2.5A2.5 2.5 0 0 1 4.5 0h8.75a.75.75 0 0 1 .75.75v12.5a.75.75 0 0 1-.75.75h-2.5a.75.75 0 0 1 0-1.5h1.75v-2h-8a1 1 0 0 0-.714 1.7.75.75 0 1 1-1.072 1.05A2.495 2.495 0 0 1 2 11.5Zm10.5-1h-8a1 1 0 0 0-1 1v6.708A2.486 2.486 0 0 1 4.5 9h8ZM5 12.25a.25.25 0 0 1 .25-.25h3.5a.25.25 0 0 1 .25.25v3.25a.25.25 0 0 1-.4.2l-1.45-1.087a.249.249 0 0 0-.3 0L5.4 15.7a.25.25 0 0 1-.4-.2Z"></path>
+</svg>
+</template>
+
+<template id="bookmark-icon">
+  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-bookmark">
+    <path d="M3 2.75C3 1.784 3.784 1 4.75 1h6.5c.966 0 1.75.784 1.75 1.75v11.5a.75.75 0 0 1-1.227.579L8 11.722l-3.773 3.107A.751.751 0 0 1 3 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v9.91l3.023-2.489a.75.75 0 0 1 .954 0l3.023 2.49V2.75a.25.25 0 0 0-.25-.25Z"></path>
+</svg>
+</template>
+
+<template id="plus-circle-icon">
+  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-plus-circle">
+    <path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Zm7.25-3.25v2.5h2.5a.75.75 0 0 1 0 1.5h-2.5v2.5a.75.75 0 0 1-1.5 0v-2.5h-2.5a.75.75 0 0 1 0-1.5h2.5v-2.5a.75.75 0 0 1 1.5 0Z"></path>
+</svg>
+</template>
+
+<template id="circle-icon">
+  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-dot-fill">
+    <path d="M8 4a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"></path>
+</svg>
+</template>
+
+<template id="trash-icon">
+  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-trash">
+    <path d="M11 1.75V3h2.25a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1 0-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75ZM4.496 6.675l.66 6.6a.25.25 0 0 0 .249.225h5.19a.25.25 0 0 0 .249-.225l.66-6.6a.75.75 0 0 1 1.492.149l-.66 6.6A1.748 1.748 0 0 1 10.595 15h-5.19a1.75 1.75 0 0 1-1.741-1.575l-.66-6.6a.75.75 0 1 1 1.492-.15ZM6.5 1.75V3h3V1.75a.25.25 0 0 0-.25-.25h-2.5a.25.25 0 0 0-.25.25Z"></path>
+</svg>
+</template>
+
+<template id="team-icon">
+  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-people">
+    <path d="M2 5.5a3.5 3.5 0 1 1 5.898 2.549 5.508 5.508 0 0 1 3.034 4.084.75.75 0 1 1-1.482.235 4 4 0 0 0-7.9 0 .75.75 0 0 1-1.482-.236A5.507 5.507 0 0 1 3.102 8.05 3.493 3.493 0 0 1 2 5.5ZM11 4a3.001 3.001 0 0 1 2.22 5.018 5.01 5.01 0 0 1 2.56 3.012.749.749 0 0 1-.885.954.752.752 0 0 1-.549-.514 3.507 3.507 0 0 0-2.522-2.372.75.75 0 0 1-.574-.73v-.352a.75.75 0 0 1 .416-.672A1.5 1.5 0 0 0 11 5.5.75.75 0 0 1 11 4Zm-5.5-.5a2 2 0 1 0-.001 3.999A2 2 0 0 0 5.5 3.5Z"></path>
+</svg>
+</template>
+
+<template id="project-icon">
+  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-project">
+    <path d="M1.75 0h12.5C15.216 0 16 .784 16 1.75v12.5A1.75 1.75 0 0 1 14.25 16H1.75A1.75 1.75 0 0 1 0 14.25V1.75C0 .784.784 0 1.75 0ZM1.5 1.75v12.5c0 .138.112.25.25.25h12.5a.25.25 0 0 0 .25-.25V1.75a.25.25 0 0 0-.25-.25H1.75a.25.25 0 0 0-.25.25ZM11.75 3a.75.75 0 0 1 .75.75v7.5a.75.75 0 0 1-1.5 0v-7.5a.75.75 0 0 1 .75-.75Zm-8.25.75a.75.75 0 0 1 1.5 0v5.5a.75.75 0 0 1-1.5 0ZM8 3a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 8 3Z"></path>
+</svg>
+</template>
+
+<template id="pencil-icon">
+  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-pencil">
+    <path d="M11.013 1.427a1.75 1.75 0 0 1 2.474 0l1.086 1.086a1.75 1.75 0 0 1 0 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 0 1-.927-.928l.929-3.25c.081-.286.235-.547.445-.758l8.61-8.61Zm.176 4.823L9.75 4.81l-6.286 6.287a.253.253 0 0 0-.064.108l-.558 1.953 1.953-.558a.253.253 0 0 0 .108-.064Zm1.238-3.763a.25.25 0 0 0-.354 0L10.811 3.75l1.439 1.44 1.263-1.263a.25.25 0 0 0 0-.354Z"></path>
+</svg>
+</template>
+
+<template id="copilot-icon">
+  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-copilot">
+    <path d="M7.998 15.035c-4.562 0-7.873-2.914-7.998-3.749V9.338c.085-.628.677-1.686 1.588-2.065.013-.07.024-.143.036-.218.029-.183.06-.384.126-.612-.201-.508-.254-1.084-.254-1.656 0-.87.128-1.769.693-2.484.579-.733 1.494-1.124 2.724-1.261 1.206-.134 2.262.034 2.944.765.05.053.096.108.139.165.044-.057.094-.112.143-.165.682-.731 1.738-.899 2.944-.765 1.23.137 2.145.528 2.724 1.261.566.715.693 1.614.693 2.484 0 .572-.053 1.148-.254 1.656.066.228.098.429.126.612.012.076.024.148.037.218.924.385 1.522 1.471 1.591 2.095v1.872c0 .766-3.351 3.795-8.002 3.795Zm0-1.485c2.28 0 4.584-1.11 5.002-1.433V7.862l-.023-.116c-.49.21-1.075.291-1.727.291-1.146 0-2.059-.327-2.71-.991A3.222 3.222 0 0 1 8 6.303a3.24 3.24 0 0 1-.544.743c-.65.664-1.563.991-2.71.991-.652 0-1.236-.081-1.727-.291l-.023.116v4.255c.419.323 2.722 1.433 5.002 1.433ZM6.762 2.83c-.193-.206-.637-.413-1.682-.297-1.019.113-1.479.404-1.713.7-.247.312-.369.789-.369 1.554 0 .793.129 1.171.308 1.371.162.181.519.379 1.442.379.853 0 1.339-.235 1.638-.54.315-.322.527-.827.617-1.553.117-.935-.037-1.395-.241-1.614Zm4.155-.297c-1.044-.116-1.488.091-1.681.297-.204.219-.359.679-.242 1.614.091.726.303 1.231.618 1.553.299.305.784.54 1.638.54.922 0 1.28-.198 1.442-.379.179-.2.308-.578.308-1.371 0-.765-.123-1.242-.37-1.554-.233-.296-.693-.587-1.713-.7Z"></path><path d="M6.25 9.037a.75.75 0 0 1 .75.75v1.501a.75.75 0 0 1-1.5 0V9.787a.75.75 0 0 1 .75-.75Zm4.25.75v1.501a.75.75 0 0 1-1.5 0V9.787a.75.75 0 0 1 1.5 0Z"></path>
+</svg>
+</template>
+
+<template id="copilot-error-icon">
+  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-copilot-error">
+    <path d="M16 11.24c0 .112-.072.274-.21.467L13 9.688V7.862l-.023-.116c-.49.21-1.075.291-1.727.291-.198 0-.388-.009-.571-.029L6.833 5.226a4.01 4.01 0 0 0 .17-.782c.117-.935-.037-1.395-.241-1.614-.193-.206-.637-.413-1.682-.297-.683.076-1.115.231-1.395.415l-1.257-.91c.579-.564 1.413-.877 2.485-.996 1.206-.134 2.262.034 2.944.765.05.053.096.108.139.165.044-.057.094-.112.143-.165.682-.731 1.738-.899 2.944-.765 1.23.137 2.145.528 2.724 1.261.566.715.693 1.614.693 2.484 0 .572-.053 1.148-.254 1.656.066.228.098.429.126.612.012.076.024.148.037.218.924.385 1.522 1.471 1.591 2.095Zm-5.083-8.707c-1.044-.116-1.488.091-1.681.297-.204.219-.359.679-.242 1.614.091.726.303 1.231.618 1.553.299.305.784.54 1.638.54.922 0 1.28-.198 1.442-.379.179-.2.308-.578.308-1.371 0-.765-.123-1.242-.37-1.554-.233-.296-.693-.587-1.713-.7Zm2.511 11.074c-1.393.776-3.272 1.428-5.43 1.428-4.562 0-7.873-2.914-7.998-3.749V9.338c.085-.628.677-1.686 1.588-2.065.013-.07.024-.143.036-.218.029-.183.06-.384.126-.612-.18-.455-.241-.963-.252-1.475L.31 4.107A.747.747 0 0 1 0 3.509V3.49a.748.748 0 0 1 .625-.73c.156-.026.306.047.435.139l14.667 10.578a.592.592 0 0 1 .227.264.752.752 0 0 1 .046.249v.022a.75.75 0 0 1-1.19.596Zm-1.367-.991L5.635 7.964a5.128 5.128 0 0 1-.889.073c-.652 0-1.236-.081-1.727-.291l-.023.116v4.255c.419.323 2.722 1.433 5.002 1.433 1.539 0 3.089-.505 4.063-.934Z"></path>
+</svg>
+</template>
+
+<template id="workflow-icon">
+  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-workflow">
+    <path d="M0 1.75C0 .784.784 0 1.75 0h3.5C6.216 0 7 .784 7 1.75v3.5A1.75 1.75 0 0 1 5.25 7H4v4a1 1 0 0 0 1 1h4v-1.25C9 9.784 9.784 9 10.75 9h3.5c.966 0 1.75.784 1.75 1.75v3.5A1.75 1.75 0 0 1 14.25 16h-3.5A1.75 1.75 0 0 1 9 14.25v-.75H5A2.5 2.5 0 0 1 2.5 11V7h-.75A1.75 1.75 0 0 1 0 5.25Zm1.75-.25a.25.25 0 0 0-.25.25v3.5c0 .138.112.25.25.25h3.5a.25.25 0 0 0 .25-.25v-3.5a.25.25 0 0 0-.25-.25Zm9 9a.25.25 0 0 0-.25.25v3.5c0 .138.112.25.25.25h3.5a.25.25 0 0 0 .25-.25v-3.5a.25.25 0 0 0-.25-.25Z"></path>
+</svg>
+</template>
+
+<template id="book-icon">
+  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-book">
+    <path d="M0 1.75A.75.75 0 0 1 .75 1h4.253c1.227 0 2.317.59 3 1.501A3.743 3.743 0 0 1 11.006 1h4.245a.75.75 0 0 1 .75.75v10.5a.75.75 0 0 1-.75.75h-4.507a2.25 2.25 0 0 0-1.591.659l-.622.621a.75.75 0 0 1-1.06 0l-.622-.621A2.25 2.25 0 0 0 5.258 13H.75a.75.75 0 0 1-.75-.75Zm7.251 10.324.004-5.073-.002-2.253A2.25 2.25 0 0 0 5.003 2.5H1.5v9h3.757a3.75 3.75 0 0 1 1.994.574ZM8.755 4.75l-.004 7.322a3.752 3.752 0 0 1 1.992-.572H14.5v-9h-3.495a2.25 2.25 0 0 0-2.25 2.25Z"></path>
+</svg>
+</template>
+
+<template id="code-review-icon">
+  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-code-review">
+    <path d="M1.75 1h12.5c.966 0 1.75.784 1.75 1.75v8.5A1.75 1.75 0 0 1 14.25 13H8.061l-2.574 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25v-8.5C0 1.784.784 1 1.75 1ZM1.5 2.75v8.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h6.5a.25.25 0 0 0 .25-.25v-8.5a.25.25 0 0 0-.25-.25H1.75a.25.25 0 0 0-.25.25Zm5.28 1.72a.75.75 0 0 1 0 1.06L5.31 7l1.47 1.47a.751.751 0 0 1-.018 1.042.751.751 0 0 1-1.042.018l-2-2a.75.75 0 0 1 0-1.06l2-2a.75.75 0 0 1 1.06 0Zm2.44 0a.75.75 0 0 1 1.06 0l2 2a.75.75 0 0 1 0 1.06l-2 2a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L10.69 7 9.22 5.53a.75.75 0 0 1 0-1.06Z"></path>
+</svg>
+</template>
+
+<template id="codespaces-icon">
+  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-codespaces">
+    <path d="M0 11.25c0-.966.784-1.75 1.75-1.75h12.5c.966 0 1.75.784 1.75 1.75v3A1.75 1.75 0 0 1 14.25 16H1.75A1.75 1.75 0 0 1 0 14.25Zm2-9.5C2 .784 2.784 0 3.75 0h8.5C13.216 0 14 .784 14 1.75v5a1.75 1.75 0 0 1-1.75 1.75h-8.5A1.75 1.75 0 0 1 2 6.75Zm1.75-.25a.25.25 0 0 0-.25.25v5c0 .138.112.25.25.25h8.5a.25.25 0 0 0 .25-.25v-5a.25.25 0 0 0-.25-.25Zm-2 9.5a.25.25 0 0 0-.25.25v3c0 .138.112.25.25.25h12.5a.25.25 0 0 0 .25-.25v-3a.25.25 0 0 0-.25-.25Z"></path><path d="M7 12.75a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 0 1.5h-4.5a.75.75 0 0 1-.75-.75Zm-4 0a.75.75 0 0 1 .75-.75h.5a.75.75 0 0 1 0 1.5h-.5a.75.75 0 0 1-.75-.75Z"></path>
+</svg>
+</template>
+
+<template id="comment-icon">
+  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-comment">
+    <path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0 1 13.25 12H9.06l-2.573 2.573A1.458 1.458 0 0 1 4 13.543V12H2.75A1.75 1.75 0 0 1 1 10.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h4.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"></path>
+</svg>
+</template>
+
+<template id="comment-discussion-icon">
+  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-comment-discussion">
+    <path d="M1.75 1h8.5c.966 0 1.75.784 1.75 1.75v5.5A1.75 1.75 0 0 1 10.25 10H7.061l-2.574 2.573A1.458 1.458 0 0 1 2 11.543V10h-.25A1.75 1.75 0 0 1 0 8.25v-5.5C0 1.784.784 1 1.75 1ZM1.5 2.75v5.5c0 .138.112.25.25.25h1a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h3.5a.25.25 0 0 0 .25-.25v-5.5a.25.25 0 0 0-.25-.25h-8.5a.25.25 0 0 0-.25.25Zm13 2a.25.25 0 0 0-.25-.25h-.5a.75.75 0 0 1 0-1.5h.5c.966 0 1.75.784 1.75 1.75v5.5A1.75 1.75 0 0 1 14.25 12H14v1.543a1.458 1.458 0 0 1-2.487 1.03L9.22 12.28a.749.749 0 0 1 .326-1.275.749.749 0 0 1 .734.215l2.22 2.22v-2.19a.75.75 0 0 1 .75-.75h1a.25.25 0 0 0 .25-.25Z"></path>
+</svg>
+</template>
+
+<template id="organization-icon">
+  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-organization">
+    <path d="M1.75 16A1.75 1.75 0 0 1 0 14.25V1.75C0 .784.784 0 1.75 0h8.5C11.216 0 12 .784 12 1.75v12.5c0 .085-.006.168-.018.25h2.268a.25.25 0 0 0 .25-.25V8.285a.25.25 0 0 0-.111-.208l-1.055-.703a.749.749 0 1 1 .832-1.248l1.055.703c.487.325.779.871.779 1.456v5.965A1.75 1.75 0 0 1 14.25 16h-3.5a.766.766 0 0 1-.197-.026c-.099.017-.2.026-.303.026h-3a.75.75 0 0 1-.75-.75V14h-1v1.25a.75.75 0 0 1-.75.75Zm-.25-1.75c0 .138.112.25.25.25H4v-1.25a.75.75 0 0 1 .75-.75h2.5a.75.75 0 0 1 .75.75v1.25h2.25a.25.25 0 0 0 .25-.25V1.75a.25.25 0 0 0-.25-.25h-8.5a.25.25 0 0 0-.25.25ZM3.75 6h.5a.75.75 0 0 1 0 1.5h-.5a.75.75 0 0 1 0-1.5ZM3 3.75A.75.75 0 0 1 3.75 3h.5a.75.75 0 0 1 0 1.5h-.5A.75.75 0 0 1 3 3.75Zm4 3A.75.75 0 0 1 7.75 6h.5a.75.75 0 0 1 0 1.5h-.5A.75.75 0 0 1 7 6.75ZM7.75 3h.5a.75.75 0 0 1 0 1.5h-.5a.75.75 0 0 1 0-1.5ZM3 9.75A.75.75 0 0 1 3.75 9h.5a.75.75 0 0 1 0 1.5h-.5A.75.75 0 0 1 3 9.75ZM7.75 9h.5a.75.75 0 0 1 0 1.5h-.5a.75.75 0 0 1 0-1.5Z"></path>
+</svg>
+</template>
+
+<template id="rocket-icon">
+  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-rocket">
+    <path d="M14.064 0h.186C15.216 0 16 .784 16 1.75v.186a8.752 8.752 0 0 1-2.564 6.186l-.458.459c-.314.314-.641.616-.979.904v3.207c0 .608-.315 1.172-.833 1.49l-2.774 1.707a.749.749 0 0 1-1.11-.418l-.954-3.102a1.214 1.214 0 0 1-.145-.125L3.754 9.816a1.218 1.218 0 0 1-.124-.145L.528 8.717a.749.749 0 0 1-.418-1.11l1.71-2.774A1.748 1.748 0 0 1 3.31 4h3.204c.288-.338.59-.665.904-.979l.459-.458A8.749 8.749 0 0 1 14.064 0ZM8.938 3.623h-.002l-.458.458c-.76.76-1.437 1.598-2.02 2.5l-1.5 2.317 2.143 2.143 2.317-1.5c.902-.583 1.74-1.26 2.499-2.02l.459-.458a7.25 7.25 0 0 0 2.123-5.127V1.75a.25.25 0 0 0-.25-.25h-.186a7.249 7.249 0 0 0-5.125 2.123ZM3.56 14.56c-.732.732-2.334 1.045-3.005 1.148a.234.234 0 0 1-.201-.064.234.234 0 0 1-.064-.201c.103-.671.416-2.273 1.15-3.003a1.502 1.502 0 1 1 2.12 2.12Zm6.94-3.935c-.088.06-.177.118-.266.175l-2.35 1.521.548 1.783 1.949-1.2a.25.25 0 0 0 .119-.213ZM3.678 8.116 5.2 5.766c.058-.09.117-.178.176-.266H3.309a.25.25 0 0 0-.213.119l-1.2 1.95ZM12 5a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"></path>
+</svg>
+</template>
+
+<template id="shield-check-icon">
+  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-shield-check">
+    <path d="m8.533.133 5.25 1.68A1.75 1.75 0 0 1 15 3.48V7c0 1.566-.32 3.182-1.303 4.682-.983 1.498-2.585 2.813-5.032 3.855a1.697 1.697 0 0 1-1.33 0c-2.447-1.042-4.049-2.357-5.032-3.855C1.32 10.182 1 8.566 1 7V3.48a1.75 1.75 0 0 1 1.217-1.667l5.25-1.68a1.748 1.748 0 0 1 1.066 0Zm-.61 1.429.001.001-5.25 1.68a.251.251 0 0 0-.174.237V7c0 1.36.275 2.666 1.057 3.859.784 1.194 2.121 2.342 4.366 3.298a.196.196 0 0 0 .154 0c2.245-.957 3.582-2.103 4.366-3.297C13.225 9.666 13.5 8.358 13.5 7V3.48a.25.25 0 0 0-.174-.238l-5.25-1.68a.25.25 0 0 0-.153 0ZM11.28 6.28l-3.5 3.5a.75.75 0 0 1-1.06 0l-1.5-1.5a.749.749 0 0 1 .326-1.275.749.749 0 0 1 .734.215l.97.97 2.97-2.97a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042Z"></path>
+</svg>
+</template>
+
+<template id="heart-icon">
+  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-heart">
+    <path d="m8 14.25.345.666a.75.75 0 0 1-.69 0l-.008-.004-.018-.01a7.152 7.152 0 0 1-.31-.17 22.055 22.055 0 0 1-3.434-2.414C2.045 10.731 0 8.35 0 5.5 0 2.836 2.086 1 4.25 1 5.797 1 7.153 1.802 8 3.02 8.847 1.802 10.203 1 11.75 1 13.914 1 16 2.836 16 5.5c0 2.85-2.045 5.231-3.885 6.818a22.066 22.066 0 0 1-3.744 2.584l-.018.01-.006.003h-.002ZM4.25 2.5c-1.336 0-2.75 1.164-2.75 3 0 2.15 1.58 4.144 3.365 5.682A20.58 20.58 0 0 0 8 13.393a20.58 20.58 0 0 0 3.135-2.211C12.92 9.644 14.5 7.65 14.5 5.5c0-1.836-1.414-3-2.75-3-1.373 0-2.609.986-3.029 2.456a.749.749 0 0 1-1.442 0C6.859 3.486 5.623 2.5 4.25 2.5Z"></path>
+</svg>
+</template>
+
+<template id="server-icon">
+  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-server">
+    <path d="M1.75 1h12.5c.966 0 1.75.784 1.75 1.75v4c0 .372-.116.717-.314 1 .198.283.314.628.314 1v4a1.75 1.75 0 0 1-1.75 1.75H1.75A1.75 1.75 0 0 1 0 12.75v-4c0-.358.109-.707.314-1a1.739 1.739 0 0 1-.314-1v-4C0 1.784.784 1 1.75 1ZM1.5 2.75v4c0 .138.112.25.25.25h12.5a.25.25 0 0 0 .25-.25v-4a.25.25 0 0 0-.25-.25H1.75a.25.25 0 0 0-.25.25Zm.25 5.75a.25.25 0 0 0-.25.25v4c0 .138.112.25.25.25h12.5a.25.25 0 0 0 .25-.25v-4a.25.25 0 0 0-.25-.25ZM7 4.75A.75.75 0 0 1 7.75 4h4.5a.75.75 0 0 1 0 1.5h-4.5A.75.75 0 0 1 7 4.75ZM7.75 10h4.5a.75.75 0 0 1 0 1.5h-4.5a.75.75 0 0 1 0-1.5ZM3 4.75A.75.75 0 0 1 3.75 4h.5a.75.75 0 0 1 0 1.5h-.5A.75.75 0 0 1 3 4.75ZM3.75 10h.5a.75.75 0 0 1 0 1.5h-.5a.75.75 0 0 1 0-1.5Z"></path>
+</svg>
+</template>
+
+<template id="globe-icon">
+  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-globe">
+    <path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM5.78 8.75a9.64 9.64 0 0 0 1.363 4.177c.255.426.542.832.857 1.215.245-.296.551-.705.857-1.215A9.64 9.64 0 0 0 10.22 8.75Zm4.44-1.5a9.64 9.64 0 0 0-1.363-4.177c-.307-.51-.612-.919-.857-1.215a9.927 9.927 0 0 0-.857 1.215A9.64 9.64 0 0 0 5.78 7.25Zm-5.944 1.5H1.543a6.507 6.507 0 0 0 4.666 5.5c-.123-.181-.24-.365-.352-.552-.715-1.192-1.437-2.874-1.581-4.948Zm-2.733-1.5h2.733c.144-2.074.866-3.756 1.58-4.948.12-.197.237-.381.353-.552a6.507 6.507 0 0 0-4.666 5.5Zm10.181 1.5c-.144 2.074-.866 3.756-1.58 4.948-.12.197-.237.381-.353.552a6.507 6.507 0 0 0 4.666-5.5Zm2.733-1.5a6.507 6.507 0 0 0-4.666-5.5c.123.181.24.365.353.552.714 1.192 1.436 2.874 1.58 4.948Z"></path>
+</svg>
+</template>
+
+<template id="issue-opened-icon">
+  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-issue-opened">
+    <path d="M8 9.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z"></path><path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Z"></path>
+</svg>
+</template>
+
+<template id="device-mobile-icon">
+  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-device-mobile">
+    <path d="M3.75 0h8.5C13.216 0 14 .784 14 1.75v12.5A1.75 1.75 0 0 1 12.25 16h-8.5A1.75 1.75 0 0 1 2 14.25V1.75C2 .784 2.784 0 3.75 0ZM3.5 1.75v12.5c0 .138.112.25.25.25h8.5a.25.25 0 0 0 .25-.25V1.75a.25.25 0 0 0-.25-.25h-8.5a.25.25 0 0 0-.25.25ZM8 13a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path>
+</svg>
+</template>
+
+<template id="package-icon">
+  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-package">
+    <path d="m8.878.392 5.25 3.045c.54.314.872.89.872 1.514v6.098a1.75 1.75 0 0 1-.872 1.514l-5.25 3.045a1.75 1.75 0 0 1-1.756 0l-5.25-3.045A1.75 1.75 0 0 1 1 11.049V4.951c0-.624.332-1.201.872-1.514L7.122.392a1.75 1.75 0 0 1 1.756 0ZM7.875 1.69l-4.63 2.685L8 7.133l4.755-2.758-4.63-2.685a.248.248 0 0 0-.25 0ZM2.5 5.677v5.372c0 .09.047.171.125.216l4.625 2.683V8.432Zm6.25 8.271 4.625-2.683a.25.25 0 0 0 .125-.216V5.677L8.75 8.432Z"></path>
+</svg>
+</template>
+
+<template id="credit-card-icon">
+  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-credit-card">
+    <path d="M10.75 9a.75.75 0 0 0 0 1.5h1.5a.75.75 0 0 0 0-1.5h-1.5Z"></path><path d="M0 3.75C0 2.784.784 2 1.75 2h12.5c.966 0 1.75.784 1.75 1.75v8.5A1.75 1.75 0 0 1 14.25 14H1.75A1.75 1.75 0 0 1 0 12.25ZM14.5 6.5h-13v5.75c0 .138.112.25.25.25h12.5a.25.25 0 0 0 .25-.25Zm0-2.75a.25.25 0 0 0-.25-.25H1.75a.25.25 0 0 0-.25.25V5h13Z"></path>
+</svg>
+</template>
+
+<template id="play-icon">
+  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-play">
+    <path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Zm4.879-2.773 4.264 2.559a.25.25 0 0 1 0 .428l-4.264 2.559A.25.25 0 0 1 6 10.559V5.442a.25.25 0 0 1 .379-.215Z"></path>
+</svg>
+</template>
+
+<template id="gift-icon">
+  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-gift">
+    <path d="M2 2.75A2.75 2.75 0 0 1 4.75 0c.983 0 1.873.42 2.57 1.232.268.318.497.668.68 1.042.183-.375.411-.725.68-1.044C9.376.42 10.266 0 11.25 0a2.75 2.75 0 0 1 2.45 4h.55c.966 0 1.75.784 1.75 1.75v2c0 .698-.409 1.301-1 1.582v4.918A1.75 1.75 0 0 1 13.25 16H2.75A1.75 1.75 0 0 1 1 14.25V9.332C.409 9.05 0 8.448 0 7.75v-2C0 4.784.784 4 1.75 4h.55c-.192-.375-.3-.8-.3-1.25ZM7.25 9.5H2.5v4.75c0 .138.112.25.25.25h4.5Zm1.5 0v5h4.5a.25.25 0 0 0 .25-.25V9.5Zm0-4V8h5.5a.25.25 0 0 0 .25-.25v-2a.25.25 0 0 0-.25-.25Zm-7 0a.25.25 0 0 0-.25.25v2c0 .138.112.25.25.25h5.5V5.5h-5.5Zm3-4a1.25 1.25 0 0 0 0 2.5h2.309c-.233-.818-.542-1.401-.878-1.793-.43-.502-.915-.707-1.431-.707ZM8.941 4h2.309a1.25 1.25 0 0 0 0-2.5c-.516 0-1 .205-1.43.707-.337.392-.646.975-.879 1.793Z"></path>
+</svg>
+</template>
+
+<template id="code-square-icon">
+  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-code-square">
+    <path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v12.5A1.75 1.75 0 0 1 14.25 16H1.75A1.75 1.75 0 0 1 0 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25h12.5a.25.25 0 0 0 .25-.25V1.75a.25.25 0 0 0-.25-.25Zm7.47 3.97a.75.75 0 0 1 1.06 0l2 2a.75.75 0 0 1 0 1.06l-2 2a.749.749 0 0 1-1.275-.326.749.749 0 0 1 .215-.734L10.69 8 9.22 6.53a.75.75 0 0 1 0-1.06ZM6.78 6.53 5.31 8l1.47 1.47a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215l-2-2a.75.75 0 0 1 0-1.06l2-2a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042Z"></path>
+</svg>
+</template>
+
+<template id="device-desktop-icon">
+  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-device-desktop">
+    <path d="M14.25 1c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0 1 14.25 12h-3.727c.099 1.041.52 1.872 1.292 2.757A.752.752 0 0 1 11.25 16h-6.5a.75.75 0 0 1-.565-1.243c.772-.885 1.192-1.716 1.292-2.757H1.75A1.75 1.75 0 0 1 0 10.25v-7.5C0 1.784.784 1 1.75 1ZM1.75 2.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h12.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25ZM9.018 12H6.982a5.72 5.72 0 0 1-.765 2.5h3.566a5.72 5.72 0 0 1-.765-2.5Z"></path>
+</svg>
+</template>
+
+        <div class="position-relative">
+                <ul
+                  role="listbox"
+                  class="ActionListWrap QueryBuilder-ListWrap"
+                  aria-label="Suggestions"
+                  data-action="
+                    combobox-commit:query-builder#comboboxCommit
+                    mousedown:query-builder#resultsMousedown
+                  "
+                  data-target="query-builder.resultsList"
+                  data-persist-list=false
+                  id="query-builder-test-results"
+                  tabindex="-1"
+                ></ul>
+        </div>
+      <div class="FormControl-inlineValidation" id="validation-ca8ee2e6-49a2-4e7b-99ae-a79ada6938e0" hidden="hidden">
+        <span class="FormControl-inlineValidation--visual">
+          <svg aria-hidden="true" height="12" viewBox="0 0 12 12" version="1.1" width="12" data-view-component="true" class="octicon octicon-alert-fill">
+    <path d="M4.855.708c.5-.896 1.79-.896 2.29 0l4.675 8.351a1.312 1.312 0 0 1-1.146 1.954H1.33A1.313 1.313 0 0 1 .183 9.058ZM7 7V3H5v4Zm-1 3a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z"></path>
+</svg>
+        </span>
+        <span></span>
+</div>    </div>
+    <div data-target="query-builder.screenReaderFeedback" aria-live="polite" aria-atomic="true" class="sr-only"></div>
+</query-builder></form>
+          <div class="d-flex flex-row color-fg-muted px-3 text-small color-bg-default search-feedback-prompt">
+            <a target="_blank" href="https://docs.github.com/search-github/github-code-search/understanding-github-code-search-syntax" data-view-component="true" class="Link color-fg-accent text-normal ml-2">Search syntax tips</a>            <div class="d-flex flex-1"></div>
+              <button data-action="click:qbsearch-input#showFeedbackDialog" type="button" data-view-component="true" class="Button--link Button--medium Button color-fg-accent text-normal ml-2">  <span class="Button-content">
+    <span class="Button-label">Give feedback</span>
+  </span>
+</button>
+          </div>
+        </div>
+</div>
+
+    </div>
+</modal-dialog></div>
+  </div>
+  <div data-action="click:qbsearch-input#retract" class="dark-backdrop position-fixed" hidden data-target="qbsearch-input.darkBackdrop"></div>
+  <div class="color-fg-default">
+    
+<dialog-helper>
+  <dialog data-target="qbsearch-input.feedbackDialog" data-action="close:qbsearch-input#handleDialogClose cancel:qbsearch-input#handleDialogClose" id="feedback-dialog" aria-modal="true" aria-labelledby="feedback-dialog-title" aria-describedby="feedback-dialog-description" data-view-component="true" class="Overlay Overlay-whenNarrow Overlay--size-medium Overlay--motion-scaleFade Overlay--disableScroll">
+    <div data-view-component="true" class="Overlay-header">
+  <div class="Overlay-headerContentWrap">
+    <div class="Overlay-titleWrap">
+      <h1 class="Overlay-title " id="feedback-dialog-title">
+        Provide feedback
+      </h1>
+        
+    </div>
+    <div class="Overlay-actionWrap">
+      <button data-close-dialog-id="feedback-dialog" aria-label="Close" aria-label="Close" type="button" data-view-component="true" class="close-button Overlay-closeButton"><svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-x">
+    <path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"></path>
+</svg></button>
+    </div>
+  </div>
+  
+</div>
+      <scrollable-region data-labelled-by="feedback-dialog-title">
+        <div data-view-component="true" class="Overlay-body">        <!-- '"` --><!-- </textarea></xmp> --></option></form><form id="code-search-feedback-form" data-turbo="false" action="/search/feedback" accept-charset="UTF-8" method="post"><input type="hidden" name="authenticity_token" value="mOSn1SvrcmUtuBvQiDLpANJuu44wZ5qqaIhZD8q40aN8_toOuVAXpNCQ2S7c5F7uXIvAypa0tPvNpbHllHTSsQ" />
+          <p>We read every piece of feedback, and take your input very seriously.</p>
+          <textarea name="feedback" class="form-control width-full mb-2" style="height: 120px" id="feedback"></textarea>
+          <input name="include_email" id="include_email" aria-label="Include my email address so I can be contacted" class="form-control mr-2" type="checkbox">
+          <label for="include_email" style="font-weight: normal">Include my email address so I can be contacted</label>
+</form></div>
+      </scrollable-region>
+      <div data-view-component="true" class="Overlay-footer Overlay-footer--alignEnd">          <button data-close-dialog-id="feedback-dialog" type="button" data-view-component="true" class="btn">    Cancel
+</button>
+          <button form="code-search-feedback-form" data-action="click:qbsearch-input#submitFeedback" type="submit" data-view-component="true" class="btn-primary btn">    Submit feedback
+</button>
+</div>
+</dialog></dialog-helper>
+
+    <custom-scopes data-target="qbsearch-input.customScopesManager">
+    
+<dialog-helper>
+  <dialog data-target="custom-scopes.customScopesModalDialog" data-action="close:qbsearch-input#handleDialogClose cancel:qbsearch-input#handleDialogClose" id="custom-scopes-dialog" aria-modal="true" aria-labelledby="custom-scopes-dialog-title" aria-describedby="custom-scopes-dialog-description" data-view-component="true" class="Overlay Overlay-whenNarrow Overlay--size-medium Overlay--motion-scaleFade Overlay--disableScroll">
+    <div data-view-component="true" class="Overlay-header Overlay-header--divided">
+  <div class="Overlay-headerContentWrap">
+    <div class="Overlay-titleWrap">
+      <h1 class="Overlay-title " id="custom-scopes-dialog-title">
+        Saved searches
+      </h1>
+        <h2 id="custom-scopes-dialog-description" class="Overlay-description">Use saved searches to filter your results more quickly</h2>
+    </div>
+    <div class="Overlay-actionWrap">
+      <button data-close-dialog-id="custom-scopes-dialog" aria-label="Close" aria-label="Close" type="button" data-view-component="true" class="close-button Overlay-closeButton"><svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-x">
+    <path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"></path>
+</svg></button>
+    </div>
+  </div>
+  
+</div>
+      <scrollable-region data-labelled-by="custom-scopes-dialog-title">
+        <div data-view-component="true" class="Overlay-body">        <div data-target="custom-scopes.customScopesModalDialogFlash"></div>
+
+        <div hidden class="create-custom-scope-form" data-target="custom-scopes.createCustomScopeForm">
+        <!-- '"` --><!-- </textarea></xmp> --></option></form><form id="custom-scopes-dialog-form" data-turbo="false" action="/search/custom_scopes" accept-charset="UTF-8" method="post"><input type="hidden" name="authenticity_token" value="HyZoGIcDt1ZgZ7BGlYNbyna7DAR00R0PVxqZlr_f0zehvRW3VjJrvjhSkt8tTfcU2SZt8cGDLU6rD6dn2fuiUg" />
+          <div data-target="custom-scopes.customScopesModalDialogFlash"></div>
+
+          <input type="hidden" id="custom_scope_id" name="custom_scope_id" data-target="custom-scopes.customScopesIdField">
+
+          <div class="form-group">
+            <label for="custom_scope_name">Name</label>
+            <auto-check src="/search/custom_scopes/check_name" required>
+              <input
+                type="text"
+                name="custom_scope_name"
+                id="custom_scope_name"
+                data-target="custom-scopes.customScopesNameField"
+                class="form-control"
+                autocomplete="off"
+                placeholder="github-ruby"
+                required
+                maxlength="50">
+              <input type="hidden" value="miXDxR2YrEctGfAZ47ugwtDufZ1pofXz-KY6bheNPfIbHvkhB29Me3Pk76bAWCn1_617D4TC31k53-G1bvlHXw" data-csrf="true" />
+            </auto-check>
+          </div>
+
+          <div class="form-group">
+            <label for="custom_scope_query">Query</label>
+            <input
+              type="text"
+              name="custom_scope_query"
+              id="custom_scope_query"
+              data-target="custom-scopes.customScopesQueryField"
+              class="form-control"
+              autocomplete="off"
+              placeholder="(repo:mona/a OR repo:mona/b) AND lang:python"
+              required
+              maxlength="500">
+          </div>
+
+          <p class="text-small color-fg-muted">
+            To see all available qualifiers, see our <a class="Link--inTextBlock" href="https://docs.github.com/search-github/github-code-search/understanding-github-code-search-syntax">documentation</a>.
+          </p>
+</form>        </div>
+
+        <div data-target="custom-scopes.manageCustomScopesForm">
+          <div data-target="custom-scopes.list"></div>
+        </div>
+
+</div>
+      </scrollable-region>
+      <div data-view-component="true" class="Overlay-footer Overlay-footer--alignEnd Overlay-footer--divided">          <button data-action="click:custom-scopes#customScopesCancel" type="button" data-view-component="true" class="btn">    Cancel
+</button>
+          <button form="custom-scopes-dialog-form" data-action="click:custom-scopes#customScopesSubmit" data-target="custom-scopes.customScopesSubmitButton" type="submit" data-view-component="true" class="btn-primary btn">    Create saved search
+</button>
+</div>
+</dialog></dialog-helper>
+    </custom-scopes>
+  </div>
+</qbsearch-input>  <input type="hidden" value="pWd1owW6JOKYd9HrbZge_pT_pzIMjulNL5ZeaFY_LYmQB3-DNc3uddcT6ji41kBd4fXwIQO-0DTlrIE2r2g7Xw" data-csrf="true" class="js-data-jump-to-suggestions-path-csrf" />
+
+
+              </div>
+
+            
+              <div class="AppHeader-CopilotChat hide-sm hide-md">
+  <div class="d-flex">
+    <react-partial-anchor>
+        <a href="/copilot" data-target="react-partial-anchor.anchor" id="copilot-chat-header-button" aria-labelledby="tooltip-a190b66b-a7b3-4ef6-9c90-ea8eeeb9c750" data-view-component="true" class="Button Button--iconOnly Button--secondary Button--medium AppHeader-button AppHeader-buttonLeft cursor-wait">  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-copilot Button-visual">
+    <path d="M7.998 15.035c-4.562 0-7.873-2.914-7.998-3.749V9.338c.085-.628.677-1.686 1.588-2.065.013-.07.024-.143.036-.218.029-.183.06-.384.126-.612-.201-.508-.254-1.084-.254-1.656 0-.87.128-1.769.693-2.484.579-.733 1.494-1.124 2.724-1.261 1.206-.134 2.262.034 2.944.765.05.053.096.108.139.165.044-.057.094-.112.143-.165.682-.731 1.738-.899 2.944-.765 1.23.137 2.145.528 2.724 1.261.566.715.693 1.614.693 2.484 0 .572-.053 1.148-.254 1.656.066.228.098.429.126.612.012.076.024.148.037.218.924.385 1.522 1.471 1.591 2.095v1.872c0 .766-3.351 3.795-8.002 3.795Zm0-1.485c2.28 0 4.584-1.11 5.002-1.433V7.862l-.023-.116c-.49.21-1.075.291-1.727.291-1.146 0-2.059-.327-2.71-.991A3.222 3.222 0 0 1 8 6.303a3.24 3.24 0 0 1-.544.743c-.65.664-1.563.991-2.71.991-.652 0-1.236-.081-1.727-.291l-.023.116v4.255c.419.323 2.722 1.433 5.002 1.433ZM6.762 2.83c-.193-.206-.637-.413-1.682-.297-1.019.113-1.479.404-1.713.7-.247.312-.369.789-.369 1.554 0 .793.129 1.171.308 1.371.162.181.519.379 1.442.379.853 0 1.339-.235 1.638-.54.315-.322.527-.827.617-1.553.117-.935-.037-1.395-.241-1.614Zm4.155-.297c-1.044-.116-1.488.091-1.681.297-.204.219-.359.679-.242 1.614.091.726.303 1.231.618 1.553.299.305.784.54 1.638.54.922 0 1.28-.198 1.442-.379.179-.2.308-.578.308-1.371 0-.765-.123-1.242-.37-1.554-.233-.296-.693-.587-1.713-.7Z"></path><path d="M6.25 9.037a.75.75 0 0 1 .75.75v1.501a.75.75 0 0 1-1.5 0V9.787a.75.75 0 0 1 .75-.75Zm4.25.75v1.501a.75.75 0 0 1-1.5 0V9.787a.75.75 0 0 1 1.5 0Z"></path>
+</svg>
+</a><tool-tip id="tooltip-a190b66b-a7b3-4ef6-9c90-ea8eeeb9c750" for="copilot-chat-header-button" popover="manual" data-direction="s" data-type="label" data-view-component="true" class="sr-only position-absolute">Chat with Copilot</tool-tip>
+
+      <template data-target="react-partial-anchor.template">
+        <script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/26744-145228b165b8.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/40489-060d59afaf1e.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/18312-17646a9d1ca3.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/347-d8794b0e68a7.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/89332-9740f6e3c202.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/15874-2c3dffc9f79c.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/45230-15943c5d83b7.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/5853-d0a8a3bf6a60.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/16007-a629e97ccd37.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/88324-d7eea3db7970.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/3146-9ca03a5c5e8d.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/4817-f48561ea4fc0.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/37294-766aafde5db8.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/2635-6f98bf46d58e.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/30721-738e76c7b1ed.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/99808-2e3a442ab29e.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/52302-7190cc266973.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/81171-757517779b01.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/84597-380f03e065b8.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/34522-d7ca02ef8731.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/34031-e8bf85523f93.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/12077-7f85f875d1b5.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/19164-b5e9ea53ae7d.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/21640-0da02ffbf656.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/lazy-react-partial-copilot-chat-2a91f4f8df12.js" defer="defer"></script>
+<script crossorigin="anonymous" type="application/javascript" src="https://github.githubassets.com/assets/copilot-chat-43ae459e68b9.js" defer="defer"></script>
+<link crossorigin="anonymous" media="all" rel="stylesheet" href="https://github.githubassets.com/assets/primer-react.e5c2e144a68844beefef.module.css" />
+<link crossorigin="anonymous" media="all" rel="stylesheet" href="https://github.githubassets.com/assets/12077.9b5890ec69bd15e57a40.module.css" />
+<link crossorigin="anonymous" media="all" rel="stylesheet" href="https://github.githubassets.com/assets/lazy-react-partial-copilot-chat.ffb75b384b5deb5e2f6f.module.css" />
+        <link crossorigin="anonymous" media="all" rel="stylesheet" href="https://github.githubassets.com/assets/copilot-markdown-rendering-ddd978d4a7c0.css" />
+        <include-fragment src="/github-copilot/chat?skip_anchor=true" data-nonce="v2:f8d1a6c6-99a7-2de0-c452-88ae43c728a8" data-view-component="true">
+  
+  <div data-show-on-forbidden-error hidden>
+    <div class="Box">
+  <div class="blankslate-container">
+    <div data-view-component="true" class="blankslate blankslate-spacious color-bg-default rounded-2">
+      
+
+      <h3 data-view-component="true" class="blankslate-heading">        Uh oh!
+</h3>
+      <p data-view-component="true">        <p class="color-fg-muted my-2 mb-2 ws-normal">There was an error while loading. <a class="Link--inTextBlock" data-turbo="false" href="" aria-label="Please reload this page">Please reload this page</a>.</p>
+</p>
+
+</div>  </div>
+</div>  </div>
+</include-fragment>
+      </template>
+    </react-partial-anchor>
+    <div class="position-relative">
+      
+        <react-partial-anchor>
+          <button id="global-copilot-menu-button" data-target="react-partial-anchor.anchor" aria-expanded="false" aria-labelledby="tooltip-a8073b49-5911-49a6-983c-778a97213efe" type="button" data-view-component="true" class="Button Button--iconOnly Button--secondary Button--medium AppHeader-button AppHeader-buttonRight">  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-triangle-down Button-visual">
+    <path d="m4.427 7.427 3.396 3.396a.25.25 0 0 0 .354 0l3.396-3.396A.25.25 0 0 0 11.396 7H4.604a.25.25 0 0 0-.177.427Z"></path>
+</svg>
+</button><tool-tip id="tooltip-a8073b49-5911-49a6-983c-778a97213efe" for="global-copilot-menu-button" popover="manual" data-direction="s" data-type="label" data-view-component="true" class="sr-only position-absolute">Open Copilot…</tool-tip>
+
+          <template data-target="react-partial-anchor.template">
+            <link crossorigin="anonymous" media="all" rel="stylesheet" href="https://github.githubassets.com/assets/primer-react.e5c2e144a68844beefef.module.css" />
+<link crossorigin="anonymous" media="all" rel="stylesheet" href="https://github.githubassets.com/assets/global-copilot-menu.9d926f69ee309a45d0df.module.css" />
+
+<react-partial
+  partial-name="global-copilot-menu"
+  data-ssr="false"
+  data-attempted-ssr="false"
+  data-react-profiling="false"
+>
+  
+  <script type="application/json" data-target="react-partial.embeddedData">{"props":{"repository":{"id":1115497539,"name":"Install_xiaozhi-server","ownerLogin":"iiml33"}}}</script>
+  <div data-target="react-partial.reactRoot"></div>
+</react-partial>
+
+
+          </template>
+        </react-partial-anchor>
+    </div>
+  </div>
+</div>
+
+
+            <div class="AppHeader-actions position-relative">
+                 <react-partial-anchor>
+      <button id="global-create-menu-anchor" aria-label="Create something new" data-target="react-partial-anchor.anchor" type="button" disabled="disabled" data-view-component="true" class="AppHeader-button AppHeader-button--dropdown global-create-button cursor-wait Button--secondary Button--medium Button width-auto color-fg-muted">  <span class="Button-content">
+      <span class="Button-visual Button-leadingVisual">
+        <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-plus">
+    <path d="M7.75 2a.75.75 0 0 1 .75.75V7h4.25a.75.75 0 0 1 0 1.5H8.5v4.25a.75.75 0 0 1-1.5 0V8.5H2.75a.75.75 0 0 1 0-1.5H7V2.75A.75.75 0 0 1 7.75 2Z"></path>
+</svg>
+      </span>
+    <span class="Button-label"><svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-triangle-down">
+    <path d="m4.427 7.427 3.396 3.396a.25.25 0 0 0 .354 0l3.396-3.396A.25.25 0 0 0 11.396 7H4.604a.25.25 0 0 0-.177.427Z"></path>
+</svg></span>
+  </span>
+</button><tool-tip id="tooltip-f2eb18dd-a924-4bb9-ad44-87450e870187" for="global-create-menu-anchor" popover="manual" data-direction="s" data-type="description" data-view-component="true" class="sr-only position-absolute">Create new…</tool-tip>
+
+      <template data-target="react-partial-anchor.template">
+        <link crossorigin="anonymous" media="all" rel="stylesheet" href="https://github.githubassets.com/assets/primer-react.e5c2e144a68844beefef.module.css" />
+<link crossorigin="anonymous" media="all" rel="stylesheet" href="https://github.githubassets.com/assets/global-create-menu.30736d4aa7b2b246dd6f.module.css" />
+
+<react-partial
+  partial-name="global-create-menu"
+  data-ssr="false"
+  data-attempted-ssr="false"
+  data-react-profiling="false"
+>
+  
+  <script type="application/json" data-target="react-partial.embeddedData">{"props":{"showCreateRepo":true,"showImportRepo":true,"showCodespaces":true,"showSpark":false,"showCodingAgent":false,"showGist":true,"showCreateOrg":true,"showCreateProject":false,"showCreateLegacyProject":false,"showCreateIssue":true,"createProjectUrl":"/iiml33?tab=projects","org":null,"owner":"iiml33","repo":"Install_xiaozhi-server"}}</script>
+  <div data-target="react-partial.reactRoot"></div>
+</react-partial>
+
+
+      </template>
+    </react-partial-anchor>
+
+
+                <a href="/issues" data-analytics-event="{&quot;category&quot;:&quot;Global navigation&quot;,&quot;action&quot;:&quot;ISSUES_HEADER&quot;,&quot;label&quot;:null}" id="icon-button-a8ba9fe3-3ab2-4bb7-8526-7dda7ae83466" aria-labelledby="tooltip-428f62f2-ceeb-417c-9079-d21a60de4f09" data-view-component="true" class="Button Button--iconOnly Button--secondary Button--medium AppHeader-button color-fg-muted">  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-issue-opened Button-visual">
+    <path d="M8 9.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z"></path><path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Z"></path>
+</svg>
+</a><tool-tip id="tooltip-428f62f2-ceeb-417c-9079-d21a60de4f09" for="icon-button-a8ba9fe3-3ab2-4bb7-8526-7dda7ae83466" popover="manual" data-direction="s" data-type="label" data-view-component="true" class="sr-only position-absolute">Your issues</tool-tip>
+
+                <a href="/pulls" data-analytics-event="{&quot;category&quot;:&quot;Global navigation&quot;,&quot;action&quot;:&quot;PULL_REQUESTS_HEADER&quot;,&quot;label&quot;:null}" id="icon-button-3d834b70-5050-4fa9-95b3-dd8ca4747b93" aria-labelledby="tooltip-deb8ffaf-0dc4-4fe8-9133-5f4713fdd859" data-view-component="true" class="Button Button--iconOnly Button--secondary Button--medium AppHeader-button color-fg-muted">  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-git-pull-request Button-visual">
+    <path d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z"></path>
+</svg>
+</a><tool-tip id="tooltip-deb8ffaf-0dc4-4fe8-9133-5f4713fdd859" for="icon-button-3d834b70-5050-4fa9-95b3-dd8ca4747b93" popover="manual" data-direction="s" data-type="label" data-view-component="true" class="sr-only position-absolute">Your pull requests</tool-tip>
+
+                  <a href="/repos" data-analytics-event="{&quot;category&quot;:&quot;Global navigation&quot;,&quot;action&quot;:&quot;REPOS_HEADER&quot;,&quot;label&quot;:null}" id="icon-button-52c48c85-8f87-4862-97f3-77d3cdb8fb48" aria-labelledby="tooltip-6d71c430-d2dc-4a88-88c7-1660136da04f" data-view-component="true" class="Button Button--iconOnly Button--secondary Button--medium AppHeader-button color-fg-muted">  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-repo Button-visual">
+    <path d="M2 2.5A2.5 2.5 0 0 1 4.5 0h8.75a.75.75 0 0 1 .75.75v12.5a.75.75 0 0 1-.75.75h-2.5a.75.75 0 0 1 0-1.5h1.75v-2h-8a1 1 0 0 0-.714 1.7.75.75 0 1 1-1.072 1.05A2.495 2.495 0 0 1 2 11.5Zm10.5-1h-8a1 1 0 0 0-1 1v6.708A2.486 2.486 0 0 1 4.5 9h8ZM5 12.25a.25.25 0 0 1 .25-.25h3.5a.25.25 0 0 1 .25.25v3.25a.25.25 0 0 1-.4.2l-1.45-1.087a.249.249 0 0 0-.3 0L5.4 15.7a.25.25 0 0 1-.4-.2Z"></path>
+</svg>
+</a><tool-tip id="tooltip-6d71c430-d2dc-4a88-88c7-1660136da04f" for="icon-button-52c48c85-8f87-4862-97f3-77d3cdb8fb48" popover="manual" data-direction="s" data-type="label" data-view-component="true" class="sr-only position-absolute">Repositories</tool-tip>
+
+            </div>
+
+              <notification-indicator data-channel="eyJjIjoibm90aWZpY2F0aW9uLWNoYW5nZWQ6MTg4MTQwMzY2IiwidCI6MTc2NjMzMDU5N30=--434e1313c17989ced94f2f55dac9995b380add56416a7a0bae2ebbcd5c78a192" data-indicator-mode="none" data-tooltip-global="You have unread notifications" data-tooltip-unavailable="Notifications are unavailable at the moment." data-tooltip-none="You have no unread notifications" data-header-redesign-enabled="true" data-fetch-indicator-src="/notifications/indicator" data-fetch-indicator-enabled="true" data-view-component="true" class="js-socket-channel">
+    <a id="AppHeader-notifications-button" href="/notifications" aria-labelledby="notification-indicator-tooltip" data-hotkey="g n" data-target="notification-indicator.link" data-analytics-event="{&quot;category&quot;:&quot;Global navigation&quot;,&quot;action&quot;:&quot;NOTIFICATIONS_HEADER&quot;,&quot;label&quot;:null}" data-view-component="true" class="Button Button--iconOnly Button--secondary Button--medium AppHeader-button color-fg-muted">  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-inbox Button-visual">
+    <path d="M2.8 2.06A1.75 1.75 0 0 1 4.41 1h7.18c.7 0 1.333.417 1.61 1.06l2.74 6.395c.04.093.06.194.06.295v4.5A1.75 1.75 0 0 1 14.25 15H1.75A1.75 1.75 0 0 1 0 13.25v-4.5c0-.101.02-.202.06-.295Zm1.61.44a.25.25 0 0 0-.23.152L1.887 8H4.75a.75.75 0 0 1 .6.3L6.625 10h2.75l1.275-1.7a.75.75 0 0 1 .6-.3h2.863L11.82 2.652a.25.25 0 0 0-.23-.152Zm10.09 7h-2.875l-1.275 1.7a.75.75 0 0 1-.6.3h-3.5a.75.75 0 0 1-.6-.3L4.375 9.5H1.5v3.75c0 .138.112.25.25.25h12.5a.25.25 0 0 0 .25-.25Z"></path>
+</svg>
+</a>
+
+    <tool-tip id="notification-indicator-tooltip" data-target="notification-indicator.tooltip" for="AppHeader-notifications-button" popover="manual" data-direction="s" data-type="label" data-view-component="true" class="sr-only position-absolute">Notifications</tool-tip>
+</notification-indicator>
+
+            <div class="AppHeader-user">
+              <deferred-side-panel data-url="/_side-panels/user?repository_id=1115497539">
+  <include-fragment data-target="deferred-side-panel.fragment" data-nonce="v2:f8d1a6c6-99a7-2de0-c452-88ae43c728a8" data-view-component="true">
+  
+    <react-partial-anchor
+  
+>
+  <button data-target="react-partial-anchor.anchor" data-login="iiml33" aria-label="Open user navigation menu" type="button" data-view-component="true" class="cursor-wait Button--invisible Button--medium Button Button--invisible-noVisuals color-bg-transparent p-0">  <span class="Button-content">
+    <span class="Button-label"><img src="https://avatars.githubusercontent.com/u/188140366?v=4" alt="" size="32" height="32" width="32" data-view-component="true" class="avatar circle" /></span>
+  </span>
+</button>
+  <template data-target="react-partial-anchor.template">
+    <link crossorigin="anonymous" media="all" rel="stylesheet" href="https://github.githubassets.com/assets/primer-react.e5c2e144a68844beefef.module.css" />
+<link crossorigin="anonymous" media="all" rel="stylesheet" href="https://github.githubassets.com/assets/global-user-nav-drawer.f4d276768bcd7cf634b3.module.css" />
+
+<react-partial
+  partial-name="global-user-nav-drawer"
+  data-ssr="false"
+  data-attempted-ssr="false"
+  data-react-profiling="false"
+>
+  
+  <script type="application/json" data-target="react-partial.embeddedData">{"props":{"owner":{"login":"iiml33","name":null,"avatarUrl":"https://avatars.githubusercontent.com/u/188140366?v=4"},"drawerId":"global-user-nav-drawer","lazyLoadItemDataFetchUrl":"/_side-panels/user.json","canAddAccount":true,"addAccountPath":"/login?add_account=1\u0026return_to=https%3A%2F%2Fgithub.com%2Fiiml33%2FInstall_xiaozhi-server%2Fblob%2Fmain%2Finstall_whiptail.sh","switchAccountPath":"/switch_account","loginAccountPath":"/login?add_account=1","projectsPath":"/iiml33?tab=projects","gistsUrl":"https://gist.github.com/mine","docsUrl":"https://docs.github.com","yourEnterpriseUrl":null,"enterpriseSettingsUrl":null,"supportUrl":"https://support.github.com","showAccountSwitcher":true,"showCopilot":true,"showEnterprises":true,"showEnterprise":false,"showGists":true,"showOrganizations":true,"showSponsors":true,"showUpgrade":true,"showFeaturesPreviews":true,"showEnterpriseSettings":false}}</script>
+  <div data-target="react-partial.reactRoot"></div>
+</react-partial>
+
+
+  </template>
+</react-partial-anchor>
+
+
+  <div data-show-on-forbidden-error hidden>
+    <div class="Box">
+  <div class="blankslate-container">
+    <div data-view-component="true" class="blankslate blankslate-spacious color-bg-default rounded-2">
+      
+
+      <h3 data-view-component="true" class="blankslate-heading">        Uh oh!
+</h3>
+      <p data-view-component="true">        <p class="color-fg-muted my-2 mb-2 ws-normal">There was an error while loading. <a class="Link--inTextBlock" data-turbo="false" href="" aria-label="Please reload this page">Please reload this page</a>.</p>
+</p>
+
+</div>  </div>
+</div>  </div>
+</include-fragment></deferred-side-panel>
+            </div>
+
+            <div class="position-absolute mt-2">
+                
+<site-header-logged-in-user-menu>
+
+</site-header-logged-in-user-menu>
+
+            </div>
+          </div>
+        </div>
+
+
+        
+            <div class="AppHeader-localBar" >
+              <nav data-pjax="#js-repo-pjax-container" aria-label="Repository" data-view-component="true" class="js-repo-nav js-sidenav-container-pjax js-responsive-underlinenav overflow-hidden UnderlineNav">
+
+  <ul data-view-component="true" class="UnderlineNav-body list-style-none">
+      <li data-view-component="true" class="d-inline-flex">
+  <a id="code-tab" href="/iiml33/Install_xiaozhi-server" data-tab-item="i0code-tab" data-selected-links="repo_source repo_downloads repo_commits repo_releases repo_tags repo_branches repo_packages repo_deployments repo_attestations /iiml33/Install_xiaozhi-server" data-pjax="#repo-content-pjax-container" data-turbo-frame="repo-content-turbo-frame" data-hotkey="g c" data-analytics-event="{&quot;category&quot;:&quot;Underline navbar&quot;,&quot;action&quot;:&quot;Click tab&quot;,&quot;label&quot;:&quot;Code&quot;,&quot;target&quot;:&quot;UNDERLINE_NAV.TAB&quot;}" data-view-component="true" class="UnderlineNav-item no-wrap js-responsive-underlinenav-item js-selected-navigation-item">
+    
+              <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-code UnderlineNav-octicon d-none d-sm-inline">
+    <path d="m11.28 3.22 4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.749.749 0 0 1-1.275-.326.749.749 0 0 1 .215-.734L13.94 8l-3.72-3.72a.749.749 0 0 1 .326-1.275.749.749 0 0 1 .734.215Zm-6.56 0a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042L2.06 8l3.72 3.72a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L.47 8.53a.75.75 0 0 1 0-1.06Z"></path>
+</svg>
+        <span data-content="Code">Code</span>
+          <span id="code-repo-tab-count" data-pjax-replace="" data-turbo-replace="" title="Not available" data-view-component="true" class="Counter"></span>
+
+
+    
+</a></li>
+      <li data-view-component="true" class="d-inline-flex">
+  <a id="pull-requests-tab" href="/iiml33/Install_xiaozhi-server/pulls" data-tab-item="i1pull-requests-tab" data-selected-links="repo_pulls checks /iiml33/Install_xiaozhi-server/pulls" data-pjax="#repo-content-pjax-container" data-turbo-frame="repo-content-turbo-frame" data-hotkey="g p" data-analytics-event="{&quot;category&quot;:&quot;Underline navbar&quot;,&quot;action&quot;:&quot;Click tab&quot;,&quot;label&quot;:&quot;Pull requests&quot;,&quot;target&quot;:&quot;UNDERLINE_NAV.TAB&quot;}" data-view-component="true" class="UnderlineNav-item no-wrap js-responsive-underlinenav-item js-selected-navigation-item">
+    
+              <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-git-pull-request UnderlineNav-octicon d-none d-sm-inline">
+    <path d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z"></path>
+</svg>
+        <span data-content="Pull requests">Pull requests</span>
+          <span id="pull-requests-repo-tab-count" data-pjax-replace="" data-turbo-replace="" title="0" hidden="hidden" data-view-component="true" class="Counter">0</span>
+
+
+    
+</a></li>
+      <li data-view-component="true" class="d-inline-flex">
+  <a id="actions-tab" href="/iiml33/Install_xiaozhi-server/actions" data-tab-item="i2actions-tab" data-selected-links="repo_actions /iiml33/Install_xiaozhi-server/actions" data-pjax="#repo-content-pjax-container" data-turbo-frame="repo-content-turbo-frame" data-hotkey="g a" data-analytics-event="{&quot;category&quot;:&quot;Underline navbar&quot;,&quot;action&quot;:&quot;Click tab&quot;,&quot;label&quot;:&quot;Actions&quot;,&quot;target&quot;:&quot;UNDERLINE_NAV.TAB&quot;}" data-view-component="true" class="UnderlineNav-item no-wrap js-responsive-underlinenav-item js-selected-navigation-item">
+    
+              <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-play UnderlineNav-octicon d-none d-sm-inline">
+    <path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Zm4.879-2.773 4.264 2.559a.25.25 0 0 1 0 .428l-4.264 2.559A.25.25 0 0 1 6 10.559V5.442a.25.25 0 0 1 .379-.215Z"></path>
+</svg>
+        <span data-content="Actions">Actions</span>
+          <span id="actions-repo-tab-count" data-pjax-replace="" data-turbo-replace="" title="Not available" data-view-component="true" class="Counter"></span>
+
+
+    
+</a></li>
+      <li data-view-component="true" class="d-inline-flex">
+  <a id="projects-tab" href="/iiml33/Install_xiaozhi-server/projects" data-tab-item="i3projects-tab" data-selected-links="repo_projects new_repo_project repo_project /iiml33/Install_xiaozhi-server/projects" data-pjax="#repo-content-pjax-container" data-turbo-frame="repo-content-turbo-frame" data-hotkey="g b" data-analytics-event="{&quot;category&quot;:&quot;Underline navbar&quot;,&quot;action&quot;:&quot;Click tab&quot;,&quot;label&quot;:&quot;Projects&quot;,&quot;target&quot;:&quot;UNDERLINE_NAV.TAB&quot;}" data-view-component="true" class="UnderlineNav-item no-wrap js-responsive-underlinenav-item js-selected-navigation-item">
+    
+              <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-table UnderlineNav-octicon d-none d-sm-inline">
+    <path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v12.5A1.75 1.75 0 0 1 14.25 16H1.75A1.75 1.75 0 0 1 0 14.25ZM6.5 6.5v8h7.75a.25.25 0 0 0 .25-.25V6.5Zm8-1.5V1.75a.25.25 0 0 0-.25-.25H6.5V5Zm-13 1.5v7.75c0 .138.112.25.25.25H5v-8ZM5 5V1.5H1.75a.25.25 0 0 0-.25.25V5Z"></path>
+</svg>
+        <span data-content="Projects">Projects</span>
+          <span id="projects-repo-tab-count" data-pjax-replace="" data-turbo-replace="" title="0" hidden="hidden" data-view-component="true" class="Counter">0</span>
+
+
+    
+</a></li>
+      <li data-view-component="true" class="d-inline-flex">
+  <a id="wiki-tab" href="/iiml33/Install_xiaozhi-server/wiki" data-tab-item="i4wiki-tab" data-selected-links="repo_wiki /iiml33/Install_xiaozhi-server/wiki" data-pjax="#repo-content-pjax-container" data-turbo-frame="repo-content-turbo-frame" data-hotkey="g w" data-analytics-event="{&quot;category&quot;:&quot;Underline navbar&quot;,&quot;action&quot;:&quot;Click tab&quot;,&quot;label&quot;:&quot;Wiki&quot;,&quot;target&quot;:&quot;UNDERLINE_NAV.TAB&quot;}" data-view-component="true" class="UnderlineNav-item no-wrap js-responsive-underlinenav-item js-selected-navigation-item">
+    
+              <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-book UnderlineNav-octicon d-none d-sm-inline">
+    <path d="M0 1.75A.75.75 0 0 1 .75 1h4.253c1.227 0 2.317.59 3 1.501A3.743 3.743 0 0 1 11.006 1h4.245a.75.75 0 0 1 .75.75v10.5a.75.75 0 0 1-.75.75h-4.507a2.25 2.25 0 0 0-1.591.659l-.622.621a.75.75 0 0 1-1.06 0l-.622-.621A2.25 2.25 0 0 0 5.258 13H.75a.75.75 0 0 1-.75-.75Zm7.251 10.324.004-5.073-.002-2.253A2.25 2.25 0 0 0 5.003 2.5H1.5v9h3.757a3.75 3.75 0 0 1 1.994.574ZM8.755 4.75l-.004 7.322a3.752 3.752 0 0 1 1.992-.572H14.5v-9h-3.495a2.25 2.25 0 0 0-2.25 2.25Z"></path>
+</svg>
+        <span data-content="Wiki">Wiki</span>
+          <span id="wiki-repo-tab-count" data-pjax-replace="" data-turbo-replace="" title="Not available" data-view-component="true" class="Counter"></span>
+
+
+    
+</a></li>
+      <li data-view-component="true" class="d-inline-flex">
+  <a id="security-tab" href="/iiml33/Install_xiaozhi-server/security" data-tab-item="i5security-tab" data-selected-links="security overview alerts policy token_scanning code_scanning /iiml33/Install_xiaozhi-server/security" data-pjax="#repo-content-pjax-container" data-turbo-frame="repo-content-turbo-frame" data-hotkey="g s" data-analytics-event="{&quot;category&quot;:&quot;Underline navbar&quot;,&quot;action&quot;:&quot;Click tab&quot;,&quot;label&quot;:&quot;Security&quot;,&quot;target&quot;:&quot;UNDERLINE_NAV.TAB&quot;}" data-view-component="true" class="UnderlineNav-item no-wrap js-responsive-underlinenav-item js-selected-navigation-item">
+    
+              <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-shield UnderlineNav-octicon d-none d-sm-inline">
+    <path d="M7.467.133a1.748 1.748 0 0 1 1.066 0l5.25 1.68A1.75 1.75 0 0 1 15 3.48V7c0 1.566-.32 3.182-1.303 4.682-.983 1.498-2.585 2.813-5.032 3.855a1.697 1.697 0 0 1-1.33 0c-2.447-1.042-4.049-2.357-5.032-3.855C1.32 10.182 1 8.566 1 7V3.48a1.75 1.75 0 0 1 1.217-1.667Zm.61 1.429a.25.25 0 0 0-.153 0l-5.25 1.68a.25.25 0 0 0-.174.238V7c0 1.358.275 2.666 1.057 3.86.784 1.194 2.121 2.34 4.366 3.297a.196.196 0 0 0 .154 0c2.245-.956 3.582-2.104 4.366-3.298C13.225 9.666 13.5 8.36 13.5 7V3.48a.251.251 0 0 0-.174-.237l-5.25-1.68ZM8.75 4.75v3a.75.75 0 0 1-1.5 0v-3a.75.75 0 0 1 1.5 0ZM9 10.5a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"></path>
+</svg>
+        <span data-content="Security">Security</span>
+          <include-fragment src="/iiml33/Install_xiaozhi-server/security/overall-count" accept="text/fragment+html" data-nonce="v2:f8d1a6c6-99a7-2de0-c452-88ae43c728a8" data-view-component="true">
+  
+  <div data-show-on-forbidden-error hidden>
+    <div class="Box">
+  <div class="blankslate-container">
+    <div data-view-component="true" class="blankslate blankslate-spacious color-bg-default rounded-2">
+      
+
+      <h3 data-view-component="true" class="blankslate-heading">        Uh oh!
+</h3>
+      <p data-view-component="true">        <p class="color-fg-muted my-2 mb-2 ws-normal">There was an error while loading. <a class="Link--inTextBlock" data-turbo="false" href="" aria-label="Please reload this page">Please reload this page</a>.</p>
+</p>
+
+</div>  </div>
+</div>  </div>
+</include-fragment>
+
+    
+</a></li>
+      <li data-view-component="true" class="d-inline-flex">
+  <a id="insights-tab" href="/iiml33/Install_xiaozhi-server/pulse" data-tab-item="i6insights-tab" data-selected-links="repo_graphs repo_contributors dependency_graph dependabot_updates pulse people community /iiml33/Install_xiaozhi-server/pulse" data-pjax="#repo-content-pjax-container" data-turbo-frame="repo-content-turbo-frame" data-analytics-event="{&quot;category&quot;:&quot;Underline navbar&quot;,&quot;action&quot;:&quot;Click tab&quot;,&quot;label&quot;:&quot;Insights&quot;,&quot;target&quot;:&quot;UNDERLINE_NAV.TAB&quot;}" data-view-component="true" class="UnderlineNav-item no-wrap js-responsive-underlinenav-item js-selected-navigation-item">
+    
+              <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-graph UnderlineNav-octicon d-none d-sm-inline">
+    <path d="M1.5 1.75V13.5h13.75a.75.75 0 0 1 0 1.5H.75a.75.75 0 0 1-.75-.75V1.75a.75.75 0 0 1 1.5 0Zm14.28 2.53-5.25 5.25a.75.75 0 0 1-1.06 0L7 7.06 4.28 9.78a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042l3.25-3.25a.75.75 0 0 1 1.06 0L10 7.94l4.72-4.72a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042Z"></path>
+</svg>
+        <span data-content="Insights">Insights</span>
+          <span id="insights-repo-tab-count" data-pjax-replace="" data-turbo-replace="" title="Not available" data-view-component="true" class="Counter"></span>
+
+
+    
+</a></li>
+      <li data-view-component="true" class="d-inline-flex">
+  <a id="settings-tab" href="/iiml33/Install_xiaozhi-server/settings" data-tab-item="i7settings-tab" data-selected-links="code_review_limits code_quality codespaces_repository_settings collaborators custom_tabs github_models_repo_settings hooks integration_installations interaction_limits issue_template_editor key_links_settings license_policy notifications repo_announcements repo_branch_settings repo_custom_properties repo_keys_settings repo_pages_settings repo_protected_tags_settings repo_rule_insights repo_rules_bypass_requests repo_rulesets repo_settings_copilot_coding_guidelines repo_settings_copilot_content_exclusion repo_settings_copilot_swe_agent repo_settings reported_content repository_actions_settings_add_new_runner repository_actions_settings_general repository_actions_settings_runner_details repository_actions_settings_runners repository_actions_settings repository_environments role_details secrets_settings_actions secrets_settings_codespaces secrets_settings_dependabot secrets security_analysis security_products /iiml33/Install_xiaozhi-server/settings" data-pjax="#repo-content-pjax-container" data-turbo-frame="repo-content-turbo-frame" data-analytics-event="{&quot;category&quot;:&quot;Underline navbar&quot;,&quot;action&quot;:&quot;Click tab&quot;,&quot;label&quot;:&quot;Settings&quot;,&quot;target&quot;:&quot;UNDERLINE_NAV.TAB&quot;}" data-view-component="true" class="UnderlineNav-item no-wrap js-responsive-underlinenav-item js-selected-navigation-item">
+    
+              <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-gear UnderlineNav-octicon d-none d-sm-inline">
+    <path d="M8 0a8.2 8.2 0 0 1 .701.031C9.444.095 9.99.645 10.16 1.29l.288 1.107c.018.066.079.158.212.224.231.114.454.243.668.386.123.082.233.09.299.071l1.103-.303c.644-.176 1.392.021 1.82.63.27.385.506.792.704 1.218.315.675.111 1.422-.364 1.891l-.814.806c-.049.048-.098.147-.088.294.016.257.016.515 0 .772-.01.147.038.246.088.294l.814.806c.475.469.679 1.216.364 1.891a7.977 7.977 0 0 1-.704 1.217c-.428.61-1.176.807-1.82.63l-1.102-.302c-.067-.019-.177-.011-.3.071a5.909 5.909 0 0 1-.668.386c-.133.066-.194.158-.211.224l-.29 1.106c-.168.646-.715 1.196-1.458 1.26a8.006 8.006 0 0 1-1.402 0c-.743-.064-1.289-.614-1.458-1.26l-.289-1.106c-.018-.066-.079-.158-.212-.224a5.738 5.738 0 0 1-.668-.386c-.123-.082-.233-.09-.299-.071l-1.103.303c-.644.176-1.392-.021-1.82-.63a8.12 8.12 0 0 1-.704-1.218c-.315-.675-.111-1.422.363-1.891l.815-.806c.05-.048.098-.147.088-.294a6.214 6.214 0 0 1 0-.772c.01-.147-.038-.246-.088-.294l-.815-.806C.635 6.045.431 5.298.746 4.623a7.92 7.92 0 0 1 .704-1.217c.428-.61 1.176-.807 1.82-.63l1.102.302c.067.019.177.011.3-.071.214-.143.437-.272.668-.386.133-.066.194-.158.211-.224l.29-1.106C6.009.645 6.556.095 7.299.03 7.53.01 7.764 0 8 0Zm-.571 1.525c-.036.003-.108.036-.137.146l-.289 1.105c-.147.561-.549.967-.998 1.189-.173.086-.34.183-.5.29-.417.278-.97.423-1.529.27l-1.103-.303c-.109-.03-.175.016-.195.045-.22.312-.412.644-.573.99-.014.031-.021.11.059.19l.815.806c.411.406.562.957.53 1.456a4.709 4.709 0 0 0 0 .582c.032.499-.119 1.05-.53 1.456l-.815.806c-.081.08-.073.159-.059.19.162.346.353.677.573.989.02.03.085.076.195.046l1.102-.303c.56-.153 1.113-.008 1.53.27.161.107.328.204.501.29.447.222.85.629.997 1.189l.289 1.105c.029.109.101.143.137.146a6.6 6.6 0 0 0 1.142 0c.036-.003.108-.036.137-.146l.289-1.105c.147-.561.549-.967.998-1.189.173-.086.34-.183.5-.29.417-.278.97-.423 1.529-.27l1.103.303c.109.029.175-.016.195-.045.22-.313.411-.644.573-.99.014-.031.021-.11-.059-.19l-.815-.806c-.411-.406-.562-.957-.53-1.456a4.709 4.709 0 0 0 0-.582c-.032-.499.119-1.05.53-1.456l.815-.806c.081-.08.073-.159.059-.19a6.464 6.464 0 0 0-.573-.989c-.02-.03-.085-.076-.195-.046l-1.102.303c-.56.153-1.113.008-1.53-.27a4.44 4.44 0 0 0-.501-.29c-.447-.222-.85-.629-.997-1.189l-.289-1.105c-.029-.11-.101-.143-.137-.146a6.6 6.6 0 0 0-1.142 0ZM11 8a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM9.5 8a1.5 1.5 0 1 0-3.001.001A1.5 1.5 0 0 0 9.5 8Z"></path>
+</svg>
+        <span data-content="Settings">Settings</span>
+          <span id="settings-repo-tab-count" data-pjax-replace="" data-turbo-replace="" title="Not available" data-view-component="true" class="Counter"></span>
+
+
+    
+</a></li>
+</ul>
+    <div style="visibility:hidden;" data-view-component="true" class="UnderlineNav-actions js-responsive-underlinenav-overflow position-absolute pr-3 pr-md-4 pr-lg-5 right-0">      <action-menu data-select-variant="none" data-view-component="true">
+  <focus-group direction="vertical" mnemonics retain>
+    <button id="action-menu-886f9cc0-8aad-4956-80c8-56c3c5d2671b-button" popovertarget="action-menu-886f9cc0-8aad-4956-80c8-56c3c5d2671b-overlay" aria-controls="action-menu-886f9cc0-8aad-4956-80c8-56c3c5d2671b-list" aria-haspopup="true" aria-labelledby="tooltip-b04b91db-1f1b-48aa-812d-c20a7315c65f" type="button" data-view-component="true" class="Button Button--iconOnly Button--secondary Button--medium UnderlineNav-item">  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-kebab-horizontal Button-visual">
+    <path d="M8 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM1.5 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Zm13 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z"></path>
+</svg>
+</button><tool-tip id="tooltip-b04b91db-1f1b-48aa-812d-c20a7315c65f" for="action-menu-886f9cc0-8aad-4956-80c8-56c3c5d2671b-button" popover="manual" data-direction="s" data-type="label" data-view-component="true" class="sr-only position-absolute">Additional navigation options</tool-tip>
+
+
+<anchored-position data-target="action-menu.overlay" id="action-menu-886f9cc0-8aad-4956-80c8-56c3c5d2671b-overlay" anchor="action-menu-886f9cc0-8aad-4956-80c8-56c3c5d2671b-button" align="start" side="outside-bottom" anchor-offset="normal" popover="auto" data-view-component="true">
+  <div data-view-component="true" class="Overlay Overlay--size-auto">
+    
+      <div data-view-component="true" class="Overlay-body Overlay-body--paddingNone">          <action-list>
+  <div data-view-component="true">
+    <ul aria-labelledby="action-menu-886f9cc0-8aad-4956-80c8-56c3c5d2671b-button" id="action-menu-886f9cc0-8aad-4956-80c8-56c3c5d2671b-list" role="menu" data-view-component="true" class="ActionListWrap--inset ActionListWrap">
+        <li hidden="hidden" data-menu-item="i0code-tab" data-targets="action-list.items" role="none" data-view-component="true" class="ActionListItem">
+    
+    
+    <a tabindex="-1" id="item-ad5a2b55-cc91-4b0a-813f-a646dca9f868" href="/iiml33/Install_xiaozhi-server" role="menuitem" data-view-component="true" class="ActionListContent ActionListContent--visual16">
+        <span class="ActionListItem-visual ActionListItem-visual--leading">
+          <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-code">
+    <path d="m11.28 3.22 4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.749.749 0 0 1-1.275-.326.749.749 0 0 1 .215-.734L13.94 8l-3.72-3.72a.749.749 0 0 1 .326-1.275.749.749 0 0 1 .734.215Zm-6.56 0a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042L2.06 8l3.72 3.72a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L.47 8.53a.75.75 0 0 1 0-1.06Z"></path>
+</svg>
+        </span>
+      
+        <span data-view-component="true" class="ActionListItem-label">
+          Code
+</span>      
+</a>
+  
+</li>
+        <li hidden="hidden" data-menu-item="i1pull-requests-tab" data-targets="action-list.items" role="none" data-view-component="true" class="ActionListItem">
+    
+    
+    <a tabindex="-1" id="item-6cb2e875-30e1-4564-83ed-0542c4959b45" href="/iiml33/Install_xiaozhi-server/pulls" role="menuitem" data-view-component="true" class="ActionListContent ActionListContent--visual16">
+        <span class="ActionListItem-visual ActionListItem-visual--leading">
+          <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-git-pull-request">
+    <path d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z"></path>
+</svg>
+        </span>
+      
+        <span data-view-component="true" class="ActionListItem-label">
+          Pull requests
+</span>      
+</a>
+  
+</li>
+        <li hidden="hidden" data-menu-item="i2actions-tab" data-targets="action-list.items" role="none" data-view-component="true" class="ActionListItem">
+    
+    
+    <a tabindex="-1" id="item-9212c902-0c90-4036-99d8-4694dff99d9d" href="/iiml33/Install_xiaozhi-server/actions" role="menuitem" data-view-component="true" class="ActionListContent ActionListContent--visual16">
+        <span class="ActionListItem-visual ActionListItem-visual--leading">
+          <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-play">
+    <path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Zm4.879-2.773 4.264 2.559a.25.25 0 0 1 0 .428l-4.264 2.559A.25.25 0 0 1 6 10.559V5.442a.25.25 0 0 1 .379-.215Z"></path>
+</svg>
+        </span>
+      
+        <span data-view-component="true" class="ActionListItem-label">
+          Actions
+</span>      
+</a>
+  
+</li>
+        <li hidden="hidden" data-menu-item="i3projects-tab" data-targets="action-list.items" role="none" data-view-component="true" class="ActionListItem">
+    
+    
+    <a tabindex="-1" id="item-7aff15b5-7b18-4497-9685-bc7a71dfa0cb" href="/iiml33/Install_xiaozhi-server/projects" role="menuitem" data-view-component="true" class="ActionListContent ActionListContent--visual16">
+        <span class="ActionListItem-visual ActionListItem-visual--leading">
+          <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-table">
+    <path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v12.5A1.75 1.75 0 0 1 14.25 16H1.75A1.75 1.75 0 0 1 0 14.25ZM6.5 6.5v8h7.75a.25.25 0 0 0 .25-.25V6.5Zm8-1.5V1.75a.25.25 0 0 0-.25-.25H6.5V5Zm-13 1.5v7.75c0 .138.112.25.25.25H5v-8ZM5 5V1.5H1.75a.25.25 0 0 0-.25.25V5Z"></path>
+</svg>
+        </span>
+      
+        <span data-view-component="true" class="ActionListItem-label">
+          Projects
+</span>      
+</a>
+  
+</li>
+        <li hidden="hidden" data-menu-item="i4wiki-tab" data-targets="action-list.items" role="none" data-view-component="true" class="ActionListItem">
+    
+    
+    <a tabindex="-1" id="item-cd95e0e7-4b32-4be9-8410-5453a186bfc7" href="/iiml33/Install_xiaozhi-server/wiki" role="menuitem" data-view-component="true" class="ActionListContent ActionListContent--visual16">
+        <span class="ActionListItem-visual ActionListItem-visual--leading">
+          <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-book">
+    <path d="M0 1.75A.75.75 0 0 1 .75 1h4.253c1.227 0 2.317.59 3 1.501A3.743 3.743 0 0 1 11.006 1h4.245a.75.75 0 0 1 .75.75v10.5a.75.75 0 0 1-.75.75h-4.507a2.25 2.25 0 0 0-1.591.659l-.622.621a.75.75 0 0 1-1.06 0l-.622-.621A2.25 2.25 0 0 0 5.258 13H.75a.75.75 0 0 1-.75-.75Zm7.251 10.324.004-5.073-.002-2.253A2.25 2.25 0 0 0 5.003 2.5H1.5v9h3.757a3.75 3.75 0 0 1 1.994.574ZM8.755 4.75l-.004 7.322a3.752 3.752 0 0 1 1.992-.572H14.5v-9h-3.495a2.25 2.25 0 0 0-2.25 2.25Z"></path>
+</svg>
+        </span>
+      
+        <span data-view-component="true" class="ActionListItem-label">
+          Wiki
+</span>      
+</a>
+  
+</li>
+        <li hidden="hidden" data-menu-item="i5security-tab" data-targets="action-list.items" role="none" data-view-component="true" class="ActionListItem">
+    
+    
+    <a tabindex="-1" id="item-52dc8914-a807-41e5-8375-06205865bc52" href="/iiml33/Install_xiaozhi-server/security" role="menuitem" data-view-component="true" class="ActionListContent ActionListContent--visual16">
+        <span class="ActionListItem-visual ActionListItem-visual--leading">
+          <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-shield">
+    <path d="M7.467.133a1.748 1.748 0 0 1 1.066 0l5.25 1.68A1.75 1.75 0 0 1 15 3.48V7c0 1.566-.32 3.182-1.303 4.682-.983 1.498-2.585 2.813-5.032 3.855a1.697 1.697 0 0 1-1.33 0c-2.447-1.042-4.049-2.357-5.032-3.855C1.32 10.182 1 8.566 1 7V3.48a1.75 1.75 0 0 1 1.217-1.667Zm.61 1.429a.25.25 0 0 0-.153 0l-5.25 1.68a.25.25 0 0 0-.174.238V7c0 1.358.275 2.666 1.057 3.86.784 1.194 2.121 2.34 4.366 3.297a.196.196 0 0 0 .154 0c2.245-.956 3.582-2.104 4.366-3.298C13.225 9.666 13.5 8.36 13.5 7V3.48a.251.251 0 0 0-.174-.237l-5.25-1.68ZM8.75 4.75v3a.75.75 0 0 1-1.5 0v-3a.75.75 0 0 1 1.5 0ZM9 10.5a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"></path>
+</svg>
+        </span>
+      
+        <span data-view-component="true" class="ActionListItem-label">
+          Security
+</span>      
+</a>
+  
+</li>
+        <li hidden="hidden" data-menu-item="i6insights-tab" data-targets="action-list.items" role="none" data-view-component="true" class="ActionListItem">
+    
+    
+    <a tabindex="-1" id="item-914e9ba4-63b2-4e81-a781-0faed70a76da" href="/iiml33/Install_xiaozhi-server/pulse" role="menuitem" data-view-component="true" class="ActionListContent ActionListContent--visual16">
+        <span class="ActionListItem-visual ActionListItem-visual--leading">
+          <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-graph">
+    <path d="M1.5 1.75V13.5h13.75a.75.75 0 0 1 0 1.5H.75a.75.75 0 0 1-.75-.75V1.75a.75.75 0 0 1 1.5 0Zm14.28 2.53-5.25 5.25a.75.75 0 0 1-1.06 0L7 7.06 4.28 9.78a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042l3.25-3.25a.75.75 0 0 1 1.06 0L10 7.94l4.72-4.72a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042Z"></path>
+</svg>
+        </span>
+      
+        <span data-view-component="true" class="ActionListItem-label">
+          Insights
+</span>      
+</a>
+  
+</li>
+        <li hidden="hidden" data-menu-item="i7settings-tab" data-targets="action-list.items" role="none" data-view-component="true" class="ActionListItem">
+    
+    
+    <a tabindex="-1" id="item-5eae1af0-49de-4e44-8369-961cb57cee21" href="/iiml33/Install_xiaozhi-server/settings" role="menuitem" data-view-component="true" class="ActionListContent ActionListContent--visual16">
+        <span class="ActionListItem-visual ActionListItem-visual--leading">
+          <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-gear">
+    <path d="M8 0a8.2 8.2 0 0 1 .701.031C9.444.095 9.99.645 10.16 1.29l.288 1.107c.018.066.079.158.212.224.231.114.454.243.668.386.123.082.233.09.299.071l1.103-.303c.644-.176 1.392.021 1.82.63.27.385.506.792.704 1.218.315.675.111 1.422-.364 1.891l-.814.806c-.049.048-.098.147-.088.294.016.257.016.515 0 .772-.01.147.038.246.088.294l.814.806c.475.469.679 1.216.364 1.891a7.977 7.977 0 0 1-.704 1.217c-.428.61-1.176.807-1.82.63l-1.102-.302c-.067-.019-.177-.011-.3.071a5.909 5.909 0 0 1-.668.386c-.133.066-.194.158-.211.224l-.29 1.106c-.168.646-.715 1.196-1.458 1.26a8.006 8.006 0 0 1-1.402 0c-.743-.064-1.289-.614-1.458-1.26l-.289-1.106c-.018-.066-.079-.158-.212-.224a5.738 5.738 0 0 1-.668-.386c-.123-.082-.233-.09-.299-.071l-1.103.303c-.644.176-1.392-.021-1.82-.63a8.12 8.12 0 0 1-.704-1.218c-.315-.675-.111-1.422.363-1.891l.815-.806c.05-.048.098-.147.088-.294a6.214 6.214 0 0 1 0-.772c.01-.147-.038-.246-.088-.294l-.815-.806C.635 6.045.431 5.298.746 4.623a7.92 7.92 0 0 1 .704-1.217c.428-.61 1.176-.807 1.82-.63l1.102.302c.067.019.177.011.3-.071.214-.143.437-.272.668-.386.133-.066.194-.158.211-.224l.29-1.106C6.009.645 6.556.095 7.299.03 7.53.01 7.764 0 8 0Zm-.571 1.525c-.036.003-.108.036-.137.146l-.289 1.105c-.147.561-.549.967-.998 1.189-.173.086-.34.183-.5.29-.417.278-.97.423-1.529.27l-1.103-.303c-.109-.03-.175.016-.195.045-.22.312-.412.644-.573.99-.014.031-.021.11.059.19l.815.806c.411.406.562.957.53 1.456a4.709 4.709 0 0 0 0 .582c.032.499-.119 1.05-.53 1.456l-.815.806c-.081.08-.073.159-.059.19.162.346.353.677.573.989.02.03.085.076.195.046l1.102-.303c.56-.153 1.113-.008 1.53.27.161.107.328.204.501.29.447.222.85.629.997 1.189l.289 1.105c.029.109.101.143.137.146a6.6 6.6 0 0 0 1.142 0c.036-.003.108-.036.137-.146l.289-1.105c.147-.561.549-.967.998-1.189.173-.086.34-.183.5-.29.417-.278.97-.423 1.529-.27l1.103.303c.109.029.175-.016.195-.045.22-.313.411-.644.573-.99.014-.031.021-.11-.059-.19l-.815-.806c-.411-.406-.562-.957-.53-1.456a4.709 4.709 0 0 0 0-.582c-.032-.499.119-1.05.53-1.456l.815-.806c.081-.08.073-.159.059-.19a6.464 6.464 0 0 0-.573-.989c-.02-.03-.085-.076-.195-.046l-1.102.303c-.56.153-1.113.008-1.53-.27a4.44 4.44 0 0 0-.501-.29c-.447-.222-.85-.629-.997-1.189l-.289-1.105c-.029-.11-.101-.143-.137-.146a6.6 6.6 0 0 0-1.142 0ZM11 8a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM9.5 8a1.5 1.5 0 1 0-3.001.001A1.5 1.5 0 0 0 9.5 8Z"></path>
+</svg>
+        </span>
+      
+        <span data-view-component="true" class="ActionListItem-label">
+          Settings
+</span>      
+</a>
+  
+</li>
+</ul>    
+</div></action-list>
+
+
+</div>
+      
+</div></anchored-position>  </focus-group>
+</action-menu></div>
+</nav>
+              
+            </div>
+    </header>
+
+
+      <div hidden="hidden" data-view-component="true" class="js-stale-session-flash stale-session-flash flash flash-warn flash-full">
+  
+        <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-alert">
+    <path d="M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0 1 14.082 15H1.918a1.75 1.75 0 0 1-1.543-2.575Zm1.763.707a.25.25 0 0 0-.44 0L1.698 13.132a.25.25 0 0 0 .22.368h12.164a.25.25 0 0 0 .22-.368Zm.53 3.996v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 11a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"></path>
+</svg>
+        <span class="js-stale-session-flash-signed-in" hidden>You signed in with another tab or window. <a class="Link--inTextBlock" href="">Reload</a> to refresh your session.</span>
+        <span class="js-stale-session-flash-signed-out" hidden>You signed out in another tab or window. <a class="Link--inTextBlock" href="">Reload</a> to refresh your session.</span>
+        <span class="js-stale-session-flash-switched" hidden>You switched accounts on another tab or window. <a class="Link--inTextBlock" href="">Reload</a> to refresh your session.</span>
+
+    <button id="icon-button-36b44dce-96d7-44cd-ae51-b5e79bb84f9d" aria-labelledby="tooltip-d98c57d2-ab11-4e9d-8f06-7f91f76523e5" type="button" data-view-component="true" class="Button Button--iconOnly Button--invisible Button--medium flash-close js-flash-close">  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-x Button-visual">
+    <path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"></path>
+</svg>
+</button><tool-tip id="tooltip-d98c57d2-ab11-4e9d-8f06-7f91f76523e5" for="icon-button-36b44dce-96d7-44cd-ae51-b5e79bb84f9d" popover="manual" data-direction="s" data-type="label" data-view-component="true" class="sr-only position-absolute">Dismiss alert</tool-tip>
+
+
+  
+</div>
+        
+          
+    </div>
+
+  <div id="start-of-content" class="show-on-focus"></div>
+
+
+
+
+
+
+
+
+    <div id="js-flash-container" class="flash-container" data-turbo-replace>
+
+
+      <include-fragment src="/settings/two_factor_authentication/holiday_warning_banner" data-nonce="v2:f8d1a6c6-99a7-2de0-c452-88ae43c728a8" data-view-component="true">
+  
+  <div data-show-on-forbidden-error hidden>
+    <div class="Box">
+  <div class="blankslate-container">
+    <div data-view-component="true" class="blankslate blankslate-spacious color-bg-default rounded-2">
+      
+
+      <h3 data-view-component="true" class="blankslate-heading">        Uh oh!
+</h3>
+      <p data-view-component="true">        <p class="color-fg-muted my-2 mb-2 ws-normal">There was an error while loading. <a class="Link--inTextBlock" data-turbo="false" href="" aria-label="Please reload this page">Please reload this page</a>.</p>
+</p>
+
+</div>  </div>
+</div>  </div>
+</include-fragment>
+
+
+  <template class="js-flash-template">
+    
+<div class="flash flash-full   {{ className }}">
+  <div >
+    <button autofocus class="flash-close js-flash-close" type="button" aria-label="Dismiss this message">
+      <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-x">
+    <path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"></path>
+</svg>
+    </button>
+    <div aria-atomic="true" role="alert" class="js-flash-alert">
+      
+      <div>{{ message }}</div>
+
+    </div>
+  </div>
+</div>
+  </template>
+</div>
+
+
+    
+  <notification-shelf-watcher data-base-url="https://github.com/notifications/beta/shelf" data-channel="eyJjIjoibm90aWZpY2F0aW9uLWNoYW5nZWQ6MTg4MTQwMzY2IiwidCI6MTc2NjMzMDU5N30=--434e1313c17989ced94f2f55dac9995b380add56416a7a0bae2ebbcd5c78a192" data-view-component="true" class="js-socket-channel"></notification-shelf-watcher>
+  <div hidden data-initial data-target="notification-shelf-watcher.placeholder"></div>
+
+
+
+
+
+
+  <div
+    class="application-main "
+    data-commit-hovercards-enabled
+    data-discussion-hovercards-enabled
+    data-issue-and-pr-hovercards-enabled
+    data-project-hovercards-enabled
+  >
+        <div itemscope itemtype="http://schema.org/SoftwareSourceCode" class="">
+    <main id="js-repo-pjax-container" >
+      
+      
+
+
+
+
+
+
+    
+  <div id="repository-container-header" data-turbo-replace hidden ></div>
+
+
+
+<turbo-frame id="repo-content-turbo-frame" target="_top" data-turbo-action="advance" class="">
+    <div id="repo-content-pjax-container" class="repository-content " >
+      <a href="https://github.dev/" class="d-none js-github-dev-shortcut" data-hotkey=".,Mod+Alt+.">Open in github.dev</a>
+  <a href="https://github.dev/" class="d-none js-github-dev-new-tab-shortcut" data-hotkey="Shift+.,Shift+&gt;,&gt;" target="_blank" rel="noopener noreferrer">Open in a new github.dev tab</a>
+    <a class="d-none" data-hotkey=",,Mod+Alt+," target="_blank" href="/codespaces/new/iiml33/Install_xiaozhi-server/tree/main?resume=1">Open in codespace</a>
+
+
+
+
+    
+      
+    
+
+
+
+
+
+
+
+
+<react-app
+  app-name="react-code-view"
+  initial-path="/iiml33/Install_xiaozhi-server/blob/main/install_whiptail.sh"
+    style="display: block; min-height: calc(100vh - 64px);"
+  data-attempted-ssr="true"
+  data-ssr="true"
+  data-lazy="false"
+  data-alternate="false"
+  data-data-router-enabled="false"
+  data-react-profiling="false"
+>
+  
+  <script type="application/json" data-target="react-app.embeddedData">{"payload":{"allShortcutsEnabled":true,"fileTree":{"":{"items":[{"name":"README.md","path":"README.md","contentType":"file"},{"name":"install_whiptail.sh","path":"install_whiptail.sh","contentType":"file"}],"totalCount":2}},"fileTreeProcessingTime":8.708857,"foldersToFetch":[],"incompleteFileTree":false,"repo":{"id":1115497539,"defaultBranch":"main","name":"Install_xiaozhi-server","ownerLogin":"iiml33","currentUserCanPush":true,"isFork":true,"isEmpty":false,"createdAt":"2025-12-13T09:09:04.000+08:00","ownerAvatar":"https://avatars.githubusercontent.com/u/188140366?v=4","public":true,"private":false,"isOrgOwned":false},"codeLineWrapEnabled":false,"symbolsExpanded":true,"treeExpanded":true,"refInfo":{"name":"main","listCacheKey":"v0:1765588151.7820642","canEdit":true,"refType":"branch","currentOid":"6fbb175b08cb5650cf33b267d0b1fa6ced0aa2ac","canEditOnDefaultBranch":true,"fileExistsOnDefault":true},"path":"install_whiptail.sh","currentUser":{"id":188140366,"login":"iiml33","userEmail":"zhendong_pan@dufe.edu.cn"},"blob":{"rawLines":["#!/bin/bash","","# 定义中断处理函数","handle_interrupt() {","    echo \"\"","    echo \"安装已被用户中断(Ctrl+C或Esc)\"","    echo \"如需重新安装，请再次运行脚本\"","    # 杀死后台进程","    kill $ESC_PID 2\u003e/dev/null","    exit 1","}","","# 设置信号捕获，处理Ctrl+C","trap handle_interrupt SIGINT","","# 处理Esc键","# 保存终端设置","old_stty_settings=$(stty -g)","# 设置终端立即响应，不回显","stty -icanon -echo min 1 time 0","","","# 打印彩色字符画","echo -e \"\\e[1;32m\"  # 设置颜色为亮绿色","cat \u003c\u003c \"EOF\"","脚本作者：@Bilibili 香草味的纳西妲喵"," __      __            _  _  _            _   _         _      _      _        "," \\ \\    / /           (_)| || |          | \\ | |       | |    (_)    | |       ","  \\ \\  / /__ _  _ __   _ | || |  __ _    |  \\| |  __ _ | |__   _   __| |  __ _ ","   \\ \\/ // _` || '_ \\ | || || | / _` |   | . ` | / _` || '_ \\ | | / _` | / _` |","    \\  /| (_| || | | || || || || (_| |   | |\\  || (_| || | | || || (_| || (_| |","     \\/  \\__,_||_| |_||_||_||_| \\__,_|   |_| \\_| \\__,_||_| |_||_| \\__,_| \\__,_|                                                                                                                                                                                                                               ","EOF","echo -e \"\\e[0m\"  # 重置颜色","echo -e \"\\e[1;36m  小智服务端全量部署一键安装脚本 Ver 0.2 2025年11月16日更新 \\e[0m\\n\"","sleep 1","","# 检查并安装whiptail","check_whiptail() {","    if ! command -v whiptail \u0026\u003e /dev/null; then","        echo \"正在安装whiptail...\"","        apt update","        apt install -y whiptail","    fi","}","","check_whiptail","","# 创建确认对话框","whiptail --title \"安装确认\" --yesno \"即将安装小智服务端，是否继续？\" \\","  --yes-button \"继续\" --no-button \"退出\" 10 50","","# 根据用户选择执行操作","case $? in","  0)","    ;;","  1)","    exit 1","    ;;","esac","","# 检查root权限","if [ $EUID -ne 0 ]; then","    whiptail --title \"权限错误\" --msgbox \"请使用root权限运行本脚本\" 10 50","    exit 1","fi","","# 检查系统版本","if [ -f /etc/os-release ]; then","    . /etc/os-release","    if [ \"$ID\" != \"debian\" ] \u0026\u0026 [ \"$ID\" != \"ubuntu\" ]; then","        whiptail --title \"系统错误\" --msgbox \"该脚本只支持Debian/Ubuntu系统执行\" 10 60","        exit 1","    fi","else","    whiptail --title \"系统错误\" --msgbox \"无法确定系统版本，该脚本只支持Debian/Ubuntu系统执行\" 10 60","    exit 1","fi","","# 下载配置文件函数","check_and_download() {","    local filepath=$1","    local url=$2","    if [ ! -f \"$filepath\" ]; then","        if ! curl -fL --progress-bar \"$url\" -o \"$filepath\"; then","            whiptail --title \"错误\" --msgbox \"${filepath}文件下载失败\" 10 50","            exit 1","        fi","    else","        echo \"${filepath}文件已存在，跳过下载\"","    fi","}","","# 执行docker compose命令的函数，优先使用docker compose，失败时回退到docker-compose","docker_compose() {","    local cmd=\"docker compose $@\"","    local fallback_cmd=\"docker-compose $@\"","    ","    echo \"尝试执行: $cmd\"","    # 尝试使用docker compose命令","    if $cmd; then","        echo \"docker compose命令执行成功\"","        return 0","    else","        echo \"docker compose命令执行失败，尝试回退到docker-compose\"","        # 回退到docker-compose命令","        if $fallback_cmd; then","            echo \"docker-compose命令执行成功\"","            return 0","        else","            echo \"docker-compose命令执行失败\"","            return 1","        fi","    fi","}","","# 从多个接口获取公网IP地址的函数，实现轮流查询机制","get_public_ip() {","    # 定义IP查询接口列表","    local ip_services=(","        \"https://myip.ipip.net\"","        \"https://ddns.oray.com/checkip\"","        \"https://ip.3322.net\"","        \"https://4.ipw.cn\"","        \"https://v4.yinghualuo.cn/bejson\"","    )","    ","    # 尝试每个服务，直到成功获取IP","    for service in \"${ip_services[@]}\"; do        ","        # 使用curl获取响应，设置超时时间为5秒","        local response","        response=$(curl -s -m 5 \"$service\" 2\u003e/dev/null)","        ","        # 检查curl是否成功执行","        if [ $? -eq 0 ] \u0026\u0026 [ -n \"$response\" ]; then","            # 尝试从响应中提取IPv4地址","            local ip","            ","            # 根据不同服务的响应格式提取IP","            case \"$service\" in","                \"https://myip.ipip.net\")","                    # 格式示例: 当前 IP：192.168.1.1  来自于：中国 北京 北京 联通","                    ip=$(echo \"$response\" | grep -oE '([0-9]{1,3}\\.){3}[0-9]{1,3}' | head -1)","                    ;;","                \"https://ddns.oray.com/checkip\")","                    # 格式示例: Current IP Address: 192.168.1.1","                    ip=$(echo \"$response\" | grep -oE '([0-9]{1,3}\\.){3}[0-9]{1,3}' | head -1)","                    ;;","                \"https://ip.3322.net\")","                    # 格式示例: 192.168.1.1","                    ip=$(echo \"$response\" | grep -oE '^([0-9]{1,3}\\.){3}[0-9]{1,3}$' | head -1)","                    ;;","                \"https://4.ipw.cn\")","                    # 格式示例: 192.168.1.1","                    ip=$(echo \"$response\" | grep -oE '^([0-9]{1,3}\\.){3}[0-9]{1,3}$' | head -1)","                    ;;","                \"https://v4.yinghualuo.cn/bejson\")","                    # 格式示例: {\"is_ipv6\":false,\"ip\":\"192.168.1.1\",\"location\":\"...\"}","                    ip=$(echo \"$response\" | grep -oE '\"ip\":\"([0-9]{1,3}\\.){3}[0-9]{1,3}\"' | grep -oE '([0-9]{1,3}\\.){3}[0-9]{1,3}' | head -1)","                    ;;","            esac","            ","            # 验证提取到的是否为有效的IPv4地址","            if [[ \"$ip\" =~ ^([0-9]{1,3}\\.){3}[0-9]{1,3}$ ]]; then","                echo \"$ip\"","                return 0","            fi","        fi","    done","    ","    # 如果所有服务都失败，回退到本地IP","    local local_ip=$(hostname -I | awk '{print $1}')","    echo \"$local_ip\"","    return 1","}","","# 检查是否已安装","check_installed() {","    # 检查目录是否存在且非空","    if [ -d \"/opt/xiaozhi-server/\" ] \u0026\u0026 [ \"$(ls -A /opt/xiaozhi-server/)\" ]; then","        DIR_CHECK=1","    else","        DIR_CHECK=0","    fi","    ","    # 检查容器是否存在","    if docker inspect xiaozhi-esp32-server \u003e /dev/null 2\u003e\u00261; then","        CONTAINER_CHECK=1","    else","        CONTAINER_CHECK=0","    fi","    ","    # 两次检查都通过","    if [ $DIR_CHECK -eq 1 ] \u0026\u0026 [ $CONTAINER_CHECK -eq 1 ]; then","        return 0  # 已安装","    else","        return 1  # 未安装","    fi","}","","# 更新相关","if check_installed; then","    if whiptail --title \"已安装检测\" --yesno \"检测到小智服务端已安装，是否进行升级？\" 10 60; then","        # 用户选择升级，执行清理操作","        echo \"开始升级操作...\"","        ","        # 停止并移除所有docker-compose服务","        docker_compose -f /opt/xiaozhi-server/docker-compose_all.yml down","        ","        # 停止并删除特定容器（考虑容器可能不存在的情况）","        containers=(","            \"xiaozhi-esp32-server\"","            \"xiaozhi-esp32-server-web\"","            \"xiaozhi-esp32-server-db\"","            \"xiaozhi-esp32-server-redis\"","        )","        ","        for container in \"${containers[@]}\"; do","            if docker ps -a --format '{{.Names}}' | grep -q \"^${container}$\"; then","                docker stop \"$container\" \u003e/dev/null 2\u003e\u00261 \u0026\u0026 \\","                docker rm \"$container\" \u003e/dev/null 2\u003e\u00261 \u0026\u0026 \\","                echo \"成功移除容器: $container\"","            else","                echo \"容器不存在，跳过: $container\"","            fi","        done","        ","        # 删除特定镜像（考虑镜像可能不存在的情况）","        images=(","            \"ghcr.nju.edu.cn/xinnan-tech/xiaozhi-esp32-server:server_latest\"","            \"ghcr.nju.edu.cn/xinnan-tech/xiaozhi-esp32-server:web_latest\"","        )","        ","        for image in \"${images[@]}\"; do","            if docker images --format '{{.Repository}}:{{.Tag}}' | grep -q \"^${image}$\"; then","                docker rmi \"$image\" \u003e/dev/null 2\u003e\u00261 \u0026\u0026 \\","                echo \"成功删除镜像: $image\"","            else","                echo \"镜像不存在，跳过: $image\"","            fi","        done","        ","        echo \"所有清理操作完成\"","        ","        # 备份原有配置文件","        mkdir -p /opt/xiaozhi-server/backup/","        if [ -f /opt/xiaozhi-server/data/.config.yaml ]; then","            cp /opt/xiaozhi-server/data/.config.yaml /opt/xiaozhi-server/backup/.config.yaml","            echo \"已备份原有配置文件到 /opt/xiaozhi-server/backup/.config.yaml\"","        fi","        ","        # 下载最新版配置文件","        check_and_download \"/opt/xiaozhi-server/docker-compose_all.yml\" \"https://ghfast.top/https://raw.githubusercontent.com/xinnan-tech/xiaozhi-esp32-server/refs/heads/main/main/xiaozhi-server/docker-compose_all.yml\"","        check_and_download \"/opt/xiaozhi-server/data/.config.yaml\" \"https://ghfast.top/https://raw.githubusercontent.com/xinnan-tech/xiaozhi-esp32-server/refs/heads/main/main/xiaozhi-server/config_from_api.yaml\"","        ","        # 启动Docker服务","        echo \"开始启动最新版本服务...\"","        # 升级完成后标记，跳过后续下载步骤","        UPGRADE_COMPLETED=1","        docker_compose -f /opt/xiaozhi-server/docker-compose_all.yml up -d","    else","          whiptail --title \"跳过升级\" --msgbox \"已取消升级，将继续使用当前版本。\" 10 50","          # 跳过升级，继续执行后续安装流程","    fi","fi","","","# 检查curl安装","if ! command -v curl \u0026\u003e /dev/null; then","    echo \"------------------------------------------------------------\"","    echo \"未检测到curl，正在安装...\"","    apt update","    apt install -y curl","else","    echo \"------------------------------------------------------------\"","    echo \"curl已安装，跳过安装步骤\"","fi","","# 检查Docker安装","if ! command -v docker \u0026\u003e /dev/null; then","    echo \"------------------------------------------------------------\"","    echo \"未检测到Docker，正在安装...\"","    ","    # 使用国内镜像源替代官方源","    DISTRO=$(lsb_release -cs)","    MIRROR_URL=\"https://mirrors.aliyun.com/docker-ce/linux/ubuntu\"","    GPG_URL=\"https://mirrors.aliyun.com/docker-ce/linux/ubuntu/gpg\"","    ","    # 安装基础依赖","    apt update","    apt install -y apt-transport-https ca-certificates curl software-properties-common gnupg","    ","    # 创建密钥目录并添加国内镜像源密钥","    mkdir -p /etc/apt/keyrings","    curl -fsSL \"$GPG_URL\" | gpg --dearmor -o /etc/apt/keyrings/docker.gpg","    ","    # 添加国内镜像源","    echo \"deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] $MIRROR_URL $DISTRO stable\" \\","        \u003e /etc/apt/sources.list.d/docker.list","    ","    # 添加备用官方源密钥（避免国内源密钥验证失败）","    apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 7EA0A9C3F273FCD8 2\u003e/dev/null || \\","    echo \"警告：部分密钥添加失败，继续尝试安装...\"","    ","    # 安装Docker","    apt update","    apt install -y docker-ce docker-ce-cli containerd.io","    ","    # 启动服务","    systemctl start docker","    systemctl enable docker","    ","    # 检查是否安装成功","    if docker --version; then","        echo \"------------------------------------------------------------\"","        echo \"Docker安装完成！\"","    else","        whiptail --title \"错误\" --msgbox \"Docker安装失败，请检查日志。\" 10 50","        exit 1","    fi","else","    echo \"Docker已安装，跳过安装步骤\"","fi","","# Docker镜像源配置","MIRROR_OPTIONS=(","    \"1\" \"轩辕镜像\"","    \"2\" \"毫秒镜像\"","    \"3\" \"腾讯云镜像源\"","    \"4\" \"中科大镜像源\"","    \"5\" \"网易163镜像源\"","    \"6\" \"华为云镜像源\"","    \"7\" \"阿里云镜像源\"","    \"8\" \"自定义镜像源\"","    \"9\" \"跳过配置\"",")","","MIRROR_CHOICE=$(whiptail --title \"选择Docker镜像源\" --menu \"请选择要使用的Docker镜像源\" 20 60 10 \\","\"${MIRROR_OPTIONS[@]}\" 3\u003e\u00261 1\u003e\u00262 2\u003e\u00263) || {","    echo \"用户取消选择，退出脚本\"","    exit 1","}","","case $MIRROR_CHOICE in","    1) MIRROR_URL=\"https://docker.xuanyuan.me\" ;; ","    2) MIRROR_URL=\"https://docker.1ms.run\" ;; ","    3) MIRROR_URL=\"https://mirror.ccs.tencentyun.com\" ;; ","    4) MIRROR_URL=\"https://docker.mirrors.ustc.edu.cn\" ;; ","    5) MIRROR_URL=\"https://hub-mirror.c.163.com\" ;; ","    6) MIRROR_URL=\"https://05f073ad3c0010ea0f4bc00b7105ec20.mirror.swr.myhuaweicloud.com\" ;; ","    7) MIRROR_URL=\"https://registry.aliyuncs.com\" ;; ","    8) MIRROR_URL=$(whiptail --title \"自定义镜像源\" --inputbox \"请输入完整的镜像源URL:\\n例如: https://docker.example.com\" 10 60 3\u003e\u00261 1\u003e\u00262 2\u003e\u00263) ;; ","    9) MIRROR_URL=\"\" ;; ","esac","","if [ -n \"$MIRROR_URL\" ]; then","    mkdir -p /etc/docker","    if [ -f /etc/docker/daemon.json ]; then","        cp /etc/docker/daemon.json /etc/docker/daemon.json.bak","    fi","    cat \u003e /etc/docker/daemon.json \u003c\u003cEOF","{","    \"dns\": [\"8.8.8.8\", \"114.114.114.114\"],","    \"registry-mirrors\": [\"$MIRROR_URL\"]","}","EOF","    whiptail --title \"配置成功\" --msgbox \"已成功添加镜像源: $MIRROR_URL\\n请按Enter键重启Docker服务并继续...\" 12 60","    echo \"------------------------------------------------------------\"","    echo \"开始重启Docker服务...\"","    systemctl restart docker.service","fi","","# 创建安装目录","echo \"------------------------------------------------------------\"","echo \"开始创建安装目录...\"","# 检查并创建数据目录","if [ ! -d /opt/xiaozhi-server/data ]; then","    mkdir -p /opt/xiaozhi-server/data","    echo \"已创建数据目录: /opt/xiaozhi-server/data\"","else","    echo \"目录xiaozhi-server/data已存在，跳过创建\"","fi","","# 检查并创建模型目录","if [ ! -d /opt/xiaozhi-server/models/SenseVoiceSmall ]; then","    mkdir -p /opt/xiaozhi-server/models/SenseVoiceSmall","    echo \"已创建模型目录: /opt/xiaozhi-server/models/SenseVoiceSmall\"","else","    echo \"目录xiaozhi-server/models/SenseVoiceSmall已存在，跳过创建\"","fi","","echo \"------------------------------------------------------------\"","echo \"开始下载语音识别模型\"","# 下载模型文件","MODEL_PATH=\"/opt/xiaozhi-server/models/SenseVoiceSmall/model.pt\"","if [ ! -f \"$MODEL_PATH\" ]; then","    (","    for i in {1..20}; do","        echo $((i*5))","        sleep 0.1","    done","    ) | whiptail --title \"下载中\" --gauge \"开始下载语音识别模型...\" 10 60 0","    curl -fL --progress-bar https://modelscope.cn/models/iic/SenseVoiceSmall/resolve/master/model.pt -o \"$MODEL_PATH\" || {","        whiptail --title \"错误\" --msgbox \"model.pt文件下载失败\" 10 50","        exit 1","    }","else","    echo \"model.pt文件已存在，跳过下载\"","fi","","# 如果不是升级完成，才执行下载","if [ -z \"$UPGRADE_COMPLETED\" ]; then","    check_and_download \"/opt/xiaozhi-server/docker-compose_all.yml\" \"https://ghfast.top/https://raw.githubusercontent.com/xinnan-tech/xiaozhi-esp32-server/refs/heads/main/main/xiaozhi-server/docker-compose_all.yml\"","    check_and_download \"/opt/xiaozhi-server/data/.config.yaml\" \"https://ghfast.top/https://raw.githubusercontent.com/xinnan-tech/xiaozhi-esp32-server/refs/heads/main/main/xiaozhi-server/config_from_api.yaml\"","fi","","# 启动Docker服务","(","echo \"------------------------------------------------------------\"","echo \"正在拉取Docker镜像...\"","echo \"这可能需要几分钟时间，请耐心等待\"","docker_compose -f /opt/xiaozhi-server/docker-compose_all.yml up -d","","if [ $? -ne 0 ]; then","    whiptail --title \"错误\" --msgbox \"Docker服务启动失败，请尝试更换镜像源后重新执行本脚本\" 10 60","    exit 1","fi","","echo \"------------------------------------------------------------\"","echo \"正在检查服务启动状态...\"","TIMEOUT=300","START_TIME=$(date +%s)","while true; do","    CURRENT_TIME=$(date +%s)","    if [ $((CURRENT_TIME - START_TIME)) -gt $TIMEOUT ]; then","        whiptail --title \"错误\" --msgbox \"服务启动超时，未在指定时间内找到预期日志内容\" 10 60","        exit 1","    fi","    ","    if docker logs xiaozhi-esp32-server-web 2\u003e\u00261 | grep -q \"Started AdminApplication in\"; then","        break","    fi","    sleep 1","done","","    echo \"服务端启动成功！正在完成配置...\"","    echo \"正在启动服务...\"","    docker_compose -f /opt/xiaozhi-server/docker-compose_all.yml up -d","    echo \"服务启动完成！\"",")","","# 密钥配置","","# 获取服务器公网地址","PUBLIC_IP=$(get_public_ip)","whiptail --title \"配置服务器密钥\" --msgbox \"请使用浏览器，访问下方链接，打开智控台并注册账号: \\","","内网地址：http://127.0.0.1:8002/ \\","","公网地址：http://$PUBLIC_IP:8002/ (若是云服务器请在服务器安全组放行端口 8000 8001 8002)。\\","","注册的第一个用户即是超级管理员，以后注册的用户都是普通用户。普通用户只能绑定设备和配置智能体; 超级管理员可以进行模型管理、用户管理、参数配置等功能。\\","","注册好后请按Enter键继续\" 18 70","SECRET_KEY=$(whiptail --title \"配置服务器密钥\" --inputbox \"请使用超级管理员账号登录智控台\\n内网地址：http://127.0.0.1:8002/ \\","公网地址：http://$PUBLIC_IP:8002/\\n在顶部菜单 参数字典 → 参数管理 找到参数编码: server.secret (服务器密钥) \\","复制该参数值并输入到下面输入框\\n\\n请输入密钥(留空则跳过配置):\" 15 60 3\u003e\u00261 1\u003e\u00262 2\u003e\u00263)","","if [ -n \"$SECRET_KEY\" ]; then","    python3 -c \"","import sys, yaml; ","config_path = '/opt/xiaozhi-server/data/.config.yaml'; ","with open(config_path, 'r') as f: ","    config = yaml.safe_load(f) or {}; ","config['manager-api'] = {'url': 'http://xiaozhi-esp32-server-web:8002/xiaozhi', 'secret': '$SECRET_KEY'}; ","with open(config_path, 'w') as f: ","    yaml.dump(config, f); ","\"","    docker restart xiaozhi-esp32-server","fi","","# 修复日志文件获取不到ws的问题，改为硬编码","# 复用之前获取的PUBLIC_IP变量，避免重复调用API","whiptail --title \"安装完成！\" --msgbox \"\\","服务端相关地址如下：\\n\\","公网地址:\\n\\","管理后台: http://$PUBLIC_IP:8002\\n\\","OTA: http://$PUBLIC_IP:8002/xiaozhi/ota/\\n\\","视觉分析接口: http://$PUBLIC_IP:8003/mcp/vision/explain\\n\\","WebSocket: ws://$PUBLIC_IP:8000/xiaozhi/v1/\\n\\","\\n安装完毕！感谢您的使用！\\n按Enter键退出...\" 20 70"],"stylingDirectives":null,"colorizedLines":["\u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#!\u003c/span\u003e/bin/bash\u003c/span\u003e","","\u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 定义中断处理函数\u003c/span\u003e","\u003cspan class=\"pl-en\"\u003ehandle_interrupt\u003c/span\u003e() {","    \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","    \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e安装已被用户中断(Ctrl+C或Esc)\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","    \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e如需重新安装，请再次运行脚本\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","    \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 杀死后台进程\u003c/span\u003e","    \u003cspan class=\"pl-c1\"\u003ekill\u003c/span\u003e \u003cspan class=\"pl-smi\"\u003e$ESC_PID\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e2\u0026gt;\u003c/span\u003e/dev/null","    \u003cspan class=\"pl-c1\"\u003eexit\u003c/span\u003e 1","}","","\u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 设置信号捕获，处理Ctrl+C\u003c/span\u003e","\u003cspan class=\"pl-c1\"\u003etrap\u003c/span\u003e handle_interrupt SIGINT","","\u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 处理Esc键\u003c/span\u003e","\u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 保存终端设置\u003c/span\u003e","old_stty_settings=\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e$(\u003c/span\u003estty -g\u003cspan class=\"pl-pds\"\u003e)\u003c/span\u003e\u003c/span\u003e","\u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 设置终端立即响应，不回显\u003c/span\u003e","stty -icanon -echo min 1 \u003cspan class=\"pl-k\"\u003etime\u003c/span\u003e 0","","","\u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 打印彩色字符画\u003c/span\u003e","\u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e -e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\\e[1;32m\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e  \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 设置颜色为亮绿色\u003c/span\u003e","cat \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-k\"\u003e\u0026lt;\u0026lt;\u003c/span\u003e \u0026quot;\u003cspan class=\"pl-k\"\u003eEOF\u003c/span\u003e\u0026quot;\u003c/span\u003e","\u003cspan class=\"pl-s\"\u003e脚本作者：@Bilibili 香草味的纳西妲喵\u003c/span\u003e","\u003cspan class=\"pl-s\"\u003e __      __            _  _  _            _   _         _      _      _        \u003c/span\u003e","\u003cspan class=\"pl-s\"\u003e \\ \\    / /           (_)| || |          | \\ | |       | |    (_)    | |       \u003c/span\u003e","\u003cspan class=\"pl-s\"\u003e  \\ \\  / /__ _  _ __   _ | || |  __ _    |  \\| |  __ _ | |__   _   __| |  __ _ \u003c/span\u003e","\u003cspan class=\"pl-s\"\u003e   \\ \\/ // _` || \u0026#39;_ \\ | || || | / _` |   | . ` | / _` || \u0026#39;_ \\ | | / _` | / _` |\u003c/span\u003e","\u003cspan class=\"pl-s\"\u003e    \\  /| (_| || | | || || || || (_| |   | |\\  || (_| || | | || || (_| || (_| |\u003c/span\u003e","\u003cspan class=\"pl-s\"\u003e     \\/  \\__,_||_| |_||_||_||_| \\__,_|   |_| \\_| \\__,_||_| |_||_| \\__,_| \\__,_|                                                                                                                                                                                                                               \u003c/span\u003e","\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-k\"\u003eEOF\u003c/span\u003e\u003c/span\u003e","\u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e -e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\\e[0m\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e  \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 重置颜色\u003c/span\u003e","\u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e -e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\\e[1;36m  小智服务端全量部署一键安装脚本 Ver 0.2 2025年11月16日更新 \\e[0m\\n\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","sleep 1","","\u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 检查并安装whiptail\u003c/span\u003e","\u003cspan class=\"pl-en\"\u003echeck_whiptail\u003c/span\u003e() {","    \u003cspan class=\"pl-k\"\u003eif\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e!\u003c/span\u003e \u003cspan class=\"pl-c1\"\u003ecommand\u003c/span\u003e -v whiptail \u003cspan class=\"pl-k\"\u003e\u0026amp;\u003c/span\u003e\u003cspan class=\"pl-k\"\u003e\u0026gt;\u003c/span\u003e /dev/null\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ethen\u003c/span\u003e","        \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e正在安装whiptail...\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","        apt update","        apt install -y whiptail","    \u003cspan class=\"pl-k\"\u003efi\u003c/span\u003e","}","","check_whiptail","","\u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 创建确认对话框\u003c/span\u003e","whiptail --title \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e安装确认\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e --yesno \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e即将安装小智服务端，是否继续？\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e \\","  --yes-button \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e继续\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e --no-button \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e退出\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e 10 50","","\u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 根据用户选择执行操作\u003c/span\u003e","\u003cspan class=\"pl-k\"\u003ecase\u003c/span\u003e \u003cspan class=\"pl-smi\"\u003e$?\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ein\u003c/span\u003e","  0)","    ;;","  1)","    \u003cspan class=\"pl-c1\"\u003eexit\u003c/span\u003e 1","    ;;","\u003cspan class=\"pl-k\"\u003eesac\u003c/span\u003e","","\u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 检查root权限\u003c/span\u003e","\u003cspan class=\"pl-k\"\u003eif\u003c/span\u003e [ \u003cspan class=\"pl-smi\"\u003e$EUID\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e-ne\u003c/span\u003e 0 ]\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ethen\u003c/span\u003e","    whiptail --title \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e权限错误\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e --msgbox \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e请使用root权限运行本脚本\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e 10 50","    \u003cspan class=\"pl-c1\"\u003eexit\u003c/span\u003e 1","\u003cspan class=\"pl-k\"\u003efi\u003c/span\u003e","","\u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 检查系统版本\u003c/span\u003e","\u003cspan class=\"pl-k\"\u003eif\u003c/span\u003e [ \u003cspan class=\"pl-k\"\u003e-f\u003c/span\u003e /etc/os-release ]\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ethen\u003c/span\u003e","    \u003cspan class=\"pl-c1\"\u003e.\u003c/span\u003e /etc/os-release","    \u003cspan class=\"pl-k\"\u003eif\u003c/span\u003e [ \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003cspan class=\"pl-smi\"\u003e$ID\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e!=\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003edebian\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e ] \u003cspan class=\"pl-k\"\u003e\u0026amp;\u0026amp;\u003c/span\u003e [ \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003cspan class=\"pl-smi\"\u003e$ID\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e!=\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003eubuntu\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e ]\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ethen\u003c/span\u003e","        whiptail --title \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e系统错误\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e --msgbox \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e该脚本只支持Debian/Ubuntu系统执行\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e 10 60","        \u003cspan class=\"pl-c1\"\u003eexit\u003c/span\u003e 1","    \u003cspan class=\"pl-k\"\u003efi\u003c/span\u003e","\u003cspan class=\"pl-k\"\u003eelse\u003c/span\u003e","    whiptail --title \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e系统错误\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e --msgbox \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e无法确定系统版本，该脚本只支持Debian/Ubuntu系统执行\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e 10 60","    \u003cspan class=\"pl-c1\"\u003eexit\u003c/span\u003e 1","\u003cspan class=\"pl-k\"\u003efi\u003c/span\u003e","","\u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 下载配置文件函数\u003c/span\u003e","\u003cspan class=\"pl-en\"\u003echeck_and_download\u003c/span\u003e() {","    \u003cspan class=\"pl-k\"\u003elocal\u003c/span\u003e filepath=\u003cspan class=\"pl-smi\"\u003e$1\u003c/span\u003e","    \u003cspan class=\"pl-k\"\u003elocal\u003c/span\u003e url=\u003cspan class=\"pl-smi\"\u003e$2\u003c/span\u003e","    \u003cspan class=\"pl-k\"\u003eif\u003c/span\u003e [ \u003cspan class=\"pl-k\"\u003e!\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e-f\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003cspan class=\"pl-smi\"\u003e$filepath\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e ]\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ethen\u003c/span\u003e","        \u003cspan class=\"pl-k\"\u003eif\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e!\u003c/span\u003e curl -fL --progress-bar \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003cspan class=\"pl-smi\"\u003e$url\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e -o \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003cspan class=\"pl-smi\"\u003e$filepath\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ethen\u003c/span\u003e","            whiptail --title \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e错误\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e --msgbox \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003cspan class=\"pl-smi\"\u003e${filepath}\u003c/span\u003e文件下载失败\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e 10 50","            \u003cspan class=\"pl-c1\"\u003eexit\u003c/span\u003e 1","        \u003cspan class=\"pl-k\"\u003efi\u003c/span\u003e","    \u003cspan class=\"pl-k\"\u003eelse\u003c/span\u003e","        \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003cspan class=\"pl-smi\"\u003e${filepath}\u003c/span\u003e文件已存在，跳过下载\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","    \u003cspan class=\"pl-k\"\u003efi\u003c/span\u003e","}","","\u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 执行docker compose命令的函数，优先使用docker compose，失败时回退到docker-compose\u003c/span\u003e","\u003cspan class=\"pl-en\"\u003edocker_compose\u003c/span\u003e() {","    \u003cspan class=\"pl-k\"\u003elocal\u003c/span\u003e cmd=\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003edocker compose \u003cspan class=\"pl-smi\"\u003e$@\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","    \u003cspan class=\"pl-k\"\u003elocal\u003c/span\u003e fallback_cmd=\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003edocker-compose \u003cspan class=\"pl-smi\"\u003e$@\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","    ","    \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e尝试执行: \u003cspan class=\"pl-smi\"\u003e$cmd\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","    \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 尝试使用docker compose命令\u003c/span\u003e","    \u003cspan class=\"pl-k\"\u003eif\u003c/span\u003e \u003cspan class=\"pl-smi\"\u003e$cmd\u003c/span\u003e\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ethen\u003c/span\u003e","        \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003edocker compose命令执行成功\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","        \u003cspan class=\"pl-k\"\u003ereturn\u003c/span\u003e 0","    \u003cspan class=\"pl-k\"\u003eelse\u003c/span\u003e","        \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003edocker compose命令执行失败，尝试回退到docker-compose\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","        \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 回退到docker-compose命令\u003c/span\u003e","        \u003cspan class=\"pl-k\"\u003eif\u003c/span\u003e \u003cspan class=\"pl-smi\"\u003e$fallback_cmd\u003c/span\u003e\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ethen\u003c/span\u003e","            \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003edocker-compose命令执行成功\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","            \u003cspan class=\"pl-k\"\u003ereturn\u003c/span\u003e 0","        \u003cspan class=\"pl-k\"\u003eelse\u003c/span\u003e","            \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003edocker-compose命令执行失败\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","            \u003cspan class=\"pl-k\"\u003ereturn\u003c/span\u003e 1","        \u003cspan class=\"pl-k\"\u003efi\u003c/span\u003e","    \u003cspan class=\"pl-k\"\u003efi\u003c/span\u003e","}","","\u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 从多个接口获取公网IP地址的函数，实现轮流查询机制\u003c/span\u003e","\u003cspan class=\"pl-en\"\u003eget_public_ip\u003c/span\u003e() {","    \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 定义IP查询接口列表\u003c/span\u003e","    \u003cspan class=\"pl-k\"\u003elocal\u003c/span\u003e ip_services=(","        \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003ehttps://myip.ipip.net\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","        \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003ehttps://ddns.oray.com/checkip\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","        \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003ehttps://ip.3322.net\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","        \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003ehttps://4.ipw.cn\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","        \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003ehttps://v4.yinghualuo.cn/bejson\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","    )","    ","    \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 尝试每个服务，直到成功获取IP\u003c/span\u003e","    \u003cspan class=\"pl-k\"\u003efor\u003c/span\u003e \u003cspan class=\"pl-smi\"\u003eservice\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ein\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003cspan class=\"pl-smi\"\u003e${ip_services[@]}\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003edo\u003c/span\u003e        ","        \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 使用curl获取响应，设置超时时间为5秒\u003c/span\u003e","        \u003cspan class=\"pl-k\"\u003elocal\u003c/span\u003e response","        response=\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e$(\u003c/span\u003ecurl -s -m 5 \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003cspan class=\"pl-smi\"\u003e$service\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e2\u0026gt;\u003c/span\u003e/dev/null\u003cspan class=\"pl-pds\"\u003e)\u003c/span\u003e\u003c/span\u003e","        ","        \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 检查curl是否成功执行\u003c/span\u003e","        \u003cspan class=\"pl-k\"\u003eif\u003c/span\u003e [ \u003cspan class=\"pl-smi\"\u003e$?\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e-eq\u003c/span\u003e 0 ] \u003cspan class=\"pl-k\"\u003e\u0026amp;\u0026amp;\u003c/span\u003e [ \u003cspan class=\"pl-k\"\u003e-n\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003cspan class=\"pl-smi\"\u003e$response\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e ]\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ethen\u003c/span\u003e","            \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 尝试从响应中提取IPv4地址\u003c/span\u003e","            \u003cspan class=\"pl-k\"\u003elocal\u003c/span\u003e ip","            ","            \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 根据不同服务的响应格式提取IP\u003c/span\u003e","            \u003cspan class=\"pl-k\"\u003ecase\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003cspan class=\"pl-smi\"\u003e$service\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ein\u003c/span\u003e","                \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003ehttps://myip.ipip.net\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e)","                    \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 格式示例: 当前 IP：192.168.1.1  来自于：中国 北京 北京 联通\u003c/span\u003e","                    ip=\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e$(\u003c/span\u003eecho \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003cspan class=\"pl-smi\"\u003e$response\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e|\u003c/span\u003e grep -oE \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026#39;\u003c/span\u003e([0-9]{1,3}\\.){3}[0-9]{1,3}\u003cspan class=\"pl-pds\"\u003e\u0026#39;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e|\u003c/span\u003e head -1\u003cspan class=\"pl-pds\"\u003e)\u003c/span\u003e\u003c/span\u003e","                    ;;","                \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003ehttps://ddns.oray.com/checkip\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e)","                    \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 格式示例: Current IP Address: 192.168.1.1\u003c/span\u003e","                    ip=\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e$(\u003c/span\u003eecho \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003cspan class=\"pl-smi\"\u003e$response\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e|\u003c/span\u003e grep -oE \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026#39;\u003c/span\u003e([0-9]{1,3}\\.){3}[0-9]{1,3}\u003cspan class=\"pl-pds\"\u003e\u0026#39;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e|\u003c/span\u003e head -1\u003cspan class=\"pl-pds\"\u003e)\u003c/span\u003e\u003c/span\u003e","                    ;;","                \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003ehttps://ip.3322.net\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e)","                    \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 格式示例: 192.168.1.1\u003c/span\u003e","                    ip=\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e$(\u003c/span\u003eecho \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003cspan class=\"pl-smi\"\u003e$response\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e|\u003c/span\u003e grep -oE \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026#39;\u003c/span\u003e^([0-9]{1,3}\\.){3}[0-9]{1,3}$\u003cspan class=\"pl-pds\"\u003e\u0026#39;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e|\u003c/span\u003e head -1\u003cspan class=\"pl-pds\"\u003e)\u003c/span\u003e\u003c/span\u003e","                    ;;","                \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003ehttps://4.ipw.cn\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e)","                    \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 格式示例: 192.168.1.1\u003c/span\u003e","                    ip=\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e$(\u003c/span\u003eecho \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003cspan class=\"pl-smi\"\u003e$response\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e|\u003c/span\u003e grep -oE \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026#39;\u003c/span\u003e^([0-9]{1,3}\\.){3}[0-9]{1,3}$\u003cspan class=\"pl-pds\"\u003e\u0026#39;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e|\u003c/span\u003e head -1\u003cspan class=\"pl-pds\"\u003e)\u003c/span\u003e\u003c/span\u003e","                    ;;","                \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003ehttps://v4.yinghualuo.cn/bejson\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e)","                    \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 格式示例: {\u0026quot;is_ipv6\u0026quot;:false,\u0026quot;ip\u0026quot;:\u0026quot;192.168.1.1\u0026quot;,\u0026quot;location\u0026quot;:\u0026quot;...\u0026quot;}\u003c/span\u003e","                    ip=\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e$(\u003c/span\u003eecho \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003cspan class=\"pl-smi\"\u003e$response\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e|\u003c/span\u003e grep -oE \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026#39;\u003c/span\u003e\u0026quot;ip\u0026quot;:\u0026quot;([0-9]{1,3}\\.){3}[0-9]{1,3}\u0026quot;\u003cspan class=\"pl-pds\"\u003e\u0026#39;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e|\u003c/span\u003e grep -oE \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026#39;\u003c/span\u003e([0-9]{1,3}\\.){3}[0-9]{1,3}\u003cspan class=\"pl-pds\"\u003e\u0026#39;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e|\u003c/span\u003e head -1\u003cspan class=\"pl-pds\"\u003e)\u003c/span\u003e\u003c/span\u003e","                    ;;","            \u003cspan class=\"pl-k\"\u003eesac\u003c/span\u003e","            ","            \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 验证提取到的是否为有效的IPv4地址\u003c/span\u003e","            \u003cspan class=\"pl-k\"\u003eif\u003c/span\u003e [[ \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003cspan class=\"pl-smi\"\u003e$ip\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e=~\u003c/span\u003e ^([0-9]{1,3}\u003cspan class=\"pl-cce\"\u003e\\.\u003c/span\u003e){3}[0-9]{1,3}$ ]]\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ethen\u003c/span\u003e","                \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003cspan class=\"pl-smi\"\u003e$ip\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","                \u003cspan class=\"pl-k\"\u003ereturn\u003c/span\u003e 0","            \u003cspan class=\"pl-k\"\u003efi\u003c/span\u003e","        \u003cspan class=\"pl-k\"\u003efi\u003c/span\u003e","    \u003cspan class=\"pl-k\"\u003edone\u003c/span\u003e","    ","    \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 如果所有服务都失败，回退到本地IP\u003c/span\u003e","    \u003cspan class=\"pl-k\"\u003elocal\u003c/span\u003e local_ip=\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e$(\u003c/span\u003ehostname -I \u003cspan class=\"pl-k\"\u003e|\u003c/span\u003e awk \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026#39;\u003c/span\u003e{print $1}\u003cspan class=\"pl-pds\"\u003e\u0026#39;\u003c/span\u003e\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e)\u003c/span\u003e\u003c/span\u003e","    \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003cspan class=\"pl-smi\"\u003e$local_ip\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","    \u003cspan class=\"pl-k\"\u003ereturn\u003c/span\u003e 1","}","","\u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 检查是否已安装\u003c/span\u003e","\u003cspan class=\"pl-en\"\u003echeck_installed\u003c/span\u003e() {","    \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 检查目录是否存在且非空\u003c/span\u003e","    \u003cspan class=\"pl-k\"\u003eif\u003c/span\u003e [ \u003cspan class=\"pl-k\"\u003e-d\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e/opt/xiaozhi-server/\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e ] \u003cspan class=\"pl-k\"\u003e\u0026amp;\u0026amp;\u003c/span\u003e [ \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e$(\u003c/span\u003els -A /opt/xiaozhi-server/\u003cspan class=\"pl-pds\"\u003e)\u003c/span\u003e\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e ]\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ethen\u003c/span\u003e","        DIR_CHECK=1","    \u003cspan class=\"pl-k\"\u003eelse\u003c/span\u003e","        DIR_CHECK=0","    \u003cspan class=\"pl-k\"\u003efi\u003c/span\u003e","    ","    \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 检查容器是否存在\u003c/span\u003e","    \u003cspan class=\"pl-k\"\u003eif\u003c/span\u003e docker inspect xiaozhi-esp32-server \u003cspan class=\"pl-k\"\u003e\u0026gt;\u003c/span\u003e /dev/null \u003cspan class=\"pl-k\"\u003e2\u0026gt;\u0026amp;1\u003c/span\u003e\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ethen\u003c/span\u003e","        CONTAINER_CHECK=1","    \u003cspan class=\"pl-k\"\u003eelse\u003c/span\u003e","        CONTAINER_CHECK=0","    \u003cspan class=\"pl-k\"\u003efi\u003c/span\u003e","    ","    \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 两次检查都通过\u003c/span\u003e","    \u003cspan class=\"pl-k\"\u003eif\u003c/span\u003e [ \u003cspan class=\"pl-smi\"\u003e$DIR_CHECK\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e-eq\u003c/span\u003e 1 ] \u003cspan class=\"pl-k\"\u003e\u0026amp;\u0026amp;\u003c/span\u003e [ \u003cspan class=\"pl-smi\"\u003e$CONTAINER_CHECK\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e-eq\u003c/span\u003e 1 ]\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ethen\u003c/span\u003e","        \u003cspan class=\"pl-k\"\u003ereturn\u003c/span\u003e 0  \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 已安装\u003c/span\u003e","    \u003cspan class=\"pl-k\"\u003eelse\u003c/span\u003e","        \u003cspan class=\"pl-k\"\u003ereturn\u003c/span\u003e 1  \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 未安装\u003c/span\u003e","    \u003cspan class=\"pl-k\"\u003efi\u003c/span\u003e","}","","\u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 更新相关\u003c/span\u003e","\u003cspan class=\"pl-k\"\u003eif\u003c/span\u003e check_installed\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ethen\u003c/span\u003e","    \u003cspan class=\"pl-k\"\u003eif\u003c/span\u003e whiptail --title \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e已安装检测\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e --yesno \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e检测到小智服务端已安装，是否进行升级？\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e 10 60\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ethen\u003c/span\u003e","        \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 用户选择升级，执行清理操作\u003c/span\u003e","        \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e开始升级操作...\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","        ","        \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 停止并移除所有docker-compose服务\u003c/span\u003e","        docker_compose -f /opt/xiaozhi-server/docker-compose_all.yml down","        ","        \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 停止并删除特定容器（考虑容器可能不存在的情况）\u003c/span\u003e","        containers=(","            \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003exiaozhi-esp32-server\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","            \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003exiaozhi-esp32-server-web\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","            \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003exiaozhi-esp32-server-db\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","            \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003exiaozhi-esp32-server-redis\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","        )","        ","        \u003cspan class=\"pl-k\"\u003efor\u003c/span\u003e \u003cspan class=\"pl-smi\"\u003econtainer\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ein\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003cspan class=\"pl-smi\"\u003e${containers[@]}\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003edo\u003c/span\u003e","            \u003cspan class=\"pl-k\"\u003eif\u003c/span\u003e docker ps -a --format \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026#39;\u003c/span\u003e{{.Names}}\u003cspan class=\"pl-pds\"\u003e\u0026#39;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e|\u003c/span\u003e grep -q \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e^\u003cspan class=\"pl-smi\"\u003e${container}\u003c/span\u003e$\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ethen\u003c/span\u003e","                docker stop \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003cspan class=\"pl-smi\"\u003e$container\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e\u0026gt;\u003c/span\u003e/dev/null \u003cspan class=\"pl-k\"\u003e2\u0026gt;\u0026amp;1\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e\u0026amp;\u0026amp;\u003c/span\u003e \\","                docker rm \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003cspan class=\"pl-smi\"\u003e$container\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e\u0026gt;\u003c/span\u003e/dev/null \u003cspan class=\"pl-k\"\u003e2\u0026gt;\u0026amp;1\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e\u0026amp;\u0026amp;\u003c/span\u003e \\","                \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e成功移除容器: \u003cspan class=\"pl-smi\"\u003e$container\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","            \u003cspan class=\"pl-k\"\u003eelse\u003c/span\u003e","                \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e容器不存在，跳过: \u003cspan class=\"pl-smi\"\u003e$container\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","            \u003cspan class=\"pl-k\"\u003efi\u003c/span\u003e","        \u003cspan class=\"pl-k\"\u003edone\u003c/span\u003e","        ","        \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 删除特定镜像（考虑镜像可能不存在的情况）\u003c/span\u003e","        images=(","            \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003eghcr.nju.edu.cn/xinnan-tech/xiaozhi-esp32-server:server_latest\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","            \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003eghcr.nju.edu.cn/xinnan-tech/xiaozhi-esp32-server:web_latest\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","        )","        ","        \u003cspan class=\"pl-k\"\u003efor\u003c/span\u003e \u003cspan class=\"pl-smi\"\u003eimage\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ein\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003cspan class=\"pl-smi\"\u003e${images[@]}\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003edo\u003c/span\u003e","            \u003cspan class=\"pl-k\"\u003eif\u003c/span\u003e docker images --format \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026#39;\u003c/span\u003e{{.Repository}}:{{.Tag}}\u003cspan class=\"pl-pds\"\u003e\u0026#39;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e|\u003c/span\u003e grep -q \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e^\u003cspan class=\"pl-smi\"\u003e${image}\u003c/span\u003e$\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ethen\u003c/span\u003e","                docker rmi \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003cspan class=\"pl-smi\"\u003e$image\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e\u0026gt;\u003c/span\u003e/dev/null \u003cspan class=\"pl-k\"\u003e2\u0026gt;\u0026amp;1\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e\u0026amp;\u0026amp;\u003c/span\u003e \\","                \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e成功删除镜像: \u003cspan class=\"pl-smi\"\u003e$image\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","            \u003cspan class=\"pl-k\"\u003eelse\u003c/span\u003e","                \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e镜像不存在，跳过: \u003cspan class=\"pl-smi\"\u003e$image\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","            \u003cspan class=\"pl-k\"\u003efi\u003c/span\u003e","        \u003cspan class=\"pl-k\"\u003edone\u003c/span\u003e","        ","        \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e所有清理操作完成\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","        ","        \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 备份原有配置文件\u003c/span\u003e","        mkdir -p /opt/xiaozhi-server/backup/","        \u003cspan class=\"pl-k\"\u003eif\u003c/span\u003e [ \u003cspan class=\"pl-k\"\u003e-f\u003c/span\u003e /opt/xiaozhi-server/data/.config.yaml ]\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ethen\u003c/span\u003e","            cp /opt/xiaozhi-server/data/.config.yaml /opt/xiaozhi-server/backup/.config.yaml","            \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e已备份原有配置文件到 /opt/xiaozhi-server/backup/.config.yaml\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","        \u003cspan class=\"pl-k\"\u003efi\u003c/span\u003e","        ","        \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 下载最新版配置文件\u003c/span\u003e","        check_and_download \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e/opt/xiaozhi-server/docker-compose_all.yml\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003ehttps://ghfast.top/https://raw.githubusercontent.com/xinnan-tech/xiaozhi-esp32-server/refs/heads/main/main/xiaozhi-server/docker-compose_all.yml\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","        check_and_download \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e/opt/xiaozhi-server/data/.config.yaml\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003ehttps://ghfast.top/https://raw.githubusercontent.com/xinnan-tech/xiaozhi-esp32-server/refs/heads/main/main/xiaozhi-server/config_from_api.yaml\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","        ","        \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 启动Docker服务\u003c/span\u003e","        \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e开始启动最新版本服务...\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","        \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 升级完成后标记，跳过后续下载步骤\u003c/span\u003e","        UPGRADE_COMPLETED=1","        docker_compose -f /opt/xiaozhi-server/docker-compose_all.yml up -d","    \u003cspan class=\"pl-k\"\u003eelse\u003c/span\u003e","          whiptail --title \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e跳过升级\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e --msgbox \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e已取消升级，将继续使用当前版本。\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e 10 50","          \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 跳过升级，继续执行后续安装流程\u003c/span\u003e","    \u003cspan class=\"pl-k\"\u003efi\u003c/span\u003e","\u003cspan class=\"pl-k\"\u003efi\u003c/span\u003e","","","\u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 检查curl安装\u003c/span\u003e","\u003cspan class=\"pl-k\"\u003eif\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e!\u003c/span\u003e \u003cspan class=\"pl-c1\"\u003ecommand\u003c/span\u003e -v curl \u003cspan class=\"pl-k\"\u003e\u0026amp;\u003c/span\u003e\u003cspan class=\"pl-k\"\u003e\u0026gt;\u003c/span\u003e /dev/null\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ethen\u003c/span\u003e","    \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e------------------------------------------------------------\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","    \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e未检测到curl，正在安装...\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","    apt update","    apt install -y curl","\u003cspan class=\"pl-k\"\u003eelse\u003c/span\u003e","    \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e------------------------------------------------------------\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","    \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003ecurl已安装，跳过安装步骤\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","\u003cspan class=\"pl-k\"\u003efi\u003c/span\u003e","","\u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 检查Docker安装\u003c/span\u003e","\u003cspan class=\"pl-k\"\u003eif\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e!\u003c/span\u003e \u003cspan class=\"pl-c1\"\u003ecommand\u003c/span\u003e -v docker \u003cspan class=\"pl-k\"\u003e\u0026amp;\u003c/span\u003e\u003cspan class=\"pl-k\"\u003e\u0026gt;\u003c/span\u003e /dev/null\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ethen\u003c/span\u003e","    \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e------------------------------------------------------------\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","    \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e未检测到Docker，正在安装...\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","    ","    \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 使用国内镜像源替代官方源\u003c/span\u003e","    DISTRO=\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e$(\u003c/span\u003elsb_release -cs\u003cspan class=\"pl-pds\"\u003e)\u003c/span\u003e\u003c/span\u003e","    MIRROR_URL=\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003ehttps://mirrors.aliyun.com/docker-ce/linux/ubuntu\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","    GPG_URL=\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003ehttps://mirrors.aliyun.com/docker-ce/linux/ubuntu/gpg\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","    ","    \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 安装基础依赖\u003c/span\u003e","    apt update","    apt install -y apt-transport-https ca-certificates curl software-properties-common gnupg","    ","    \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 创建密钥目录并添加国内镜像源密钥\u003c/span\u003e","    mkdir -p /etc/apt/keyrings","    curl -fsSL \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003cspan class=\"pl-smi\"\u003e$GPG_URL\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e|\u003c/span\u003e gpg --dearmor -o /etc/apt/keyrings/docker.gpg","    ","    \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 添加国内镜像源\u003c/span\u003e","    \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003edeb [arch=\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e$(\u003c/span\u003edpkg --print-architecture\u003cspan class=\"pl-pds\"\u003e)\u003c/span\u003e\u003c/span\u003e signed-by=/etc/apt/keyrings/docker.gpg] \u003cspan class=\"pl-smi\"\u003e$MIRROR_URL\u003c/span\u003e \u003cspan class=\"pl-smi\"\u003e$DISTRO\u003c/span\u003e stable\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e \\","        \u003cspan class=\"pl-k\"\u003e\u0026gt;\u003c/span\u003e /etc/apt/sources.list.d/docker.list","    ","    \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 添加备用官方源密钥（避免国内源密钥验证失败）\u003c/span\u003e","    apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 7EA0A9C3F273FCD8 \u003cspan class=\"pl-k\"\u003e2\u0026gt;\u003c/span\u003e/dev/null \u003cspan class=\"pl-k\"\u003e||\u003c/span\u003e \\","    \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e警告：部分密钥添加失败，继续尝试安装...\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","    ","    \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 安装Docker\u003c/span\u003e","    apt update","    apt install -y docker-ce docker-ce-cli containerd.io","    ","    \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 启动服务\u003c/span\u003e","    systemctl start docker","    systemctl \u003cspan class=\"pl-c1\"\u003eenable\u003c/span\u003e docker","    ","    \u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 检查是否安装成功\u003c/span\u003e","    \u003cspan class=\"pl-k\"\u003eif\u003c/span\u003e docker --version\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ethen\u003c/span\u003e","        \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e------------------------------------------------------------\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","        \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003eDocker安装完成！\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","    \u003cspan class=\"pl-k\"\u003eelse\u003c/span\u003e","        whiptail --title \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e错误\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e --msgbox \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003eDocker安装失败，请检查日志。\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e 10 50","        \u003cspan class=\"pl-c1\"\u003eexit\u003c/span\u003e 1","    \u003cspan class=\"pl-k\"\u003efi\u003c/span\u003e","\u003cspan class=\"pl-k\"\u003eelse\u003c/span\u003e","    \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003eDocker已安装，跳过安装步骤\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","\u003cspan class=\"pl-k\"\u003efi\u003c/span\u003e","","\u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e Docker镜像源配置\u003c/span\u003e","MIRROR_OPTIONS=(","    \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e1\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e轩辕镜像\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","    \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e2\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e毫秒镜像\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","    \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e3\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e腾讯云镜像源\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","    \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e4\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e中科大镜像源\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","    \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e5\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e网易163镜像源\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","    \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e6\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e华为云镜像源\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","    \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e7\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e阿里云镜像源\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","    \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e8\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e自定义镜像源\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","    \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e9\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e跳过配置\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e",")","","MIRROR_CHOICE=\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e$(\u003c/span\u003ewhiptail --title \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e选择Docker镜像源\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e --menu \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e请选择要使用的Docker镜像源\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e 20 60 10 \\\u003c/span\u003e","\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003cspan class=\"pl-smi\"\u003e${MIRROR_OPTIONS[@]}\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e3\u0026gt;\u0026amp;1\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e1\u0026gt;\u0026amp;2\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e2\u0026gt;\u0026amp;3\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e)\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e||\u003c/span\u003e {","    \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e用户取消选择，退出脚本\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","    \u003cspan class=\"pl-c1\"\u003eexit\u003c/span\u003e 1","}","","\u003cspan class=\"pl-k\"\u003ecase\u003c/span\u003e \u003cspan class=\"pl-smi\"\u003e$MIRROR_CHOICE\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ein\u003c/span\u003e","    1) MIRROR_URL=\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003ehttps://docker.xuanyuan.me\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e ;; ","    2) MIRROR_URL=\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003ehttps://docker.1ms.run\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e ;; ","    3) MIRROR_URL=\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003ehttps://mirror.ccs.tencentyun.com\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e ;; ","    4) MIRROR_URL=\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003ehttps://docker.mirrors.ustc.edu.cn\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e ;; ","    5) MIRROR_URL=\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003ehttps://hub-mirror.c.163.com\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e ;; ","    6) MIRROR_URL=\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003ehttps://05f073ad3c0010ea0f4bc00b7105ec20.mirror.swr.myhuaweicloud.com\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e ;; ","    7) MIRROR_URL=\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003ehttps://registry.aliyuncs.com\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e ;; ","    8) MIRROR_URL=\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e$(\u003c/span\u003ewhiptail --title \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e自定义镜像源\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e --inputbox \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e请输入完整的镜像源URL:\\n例如: https://docker.example.com\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e 10 60 \u003cspan class=\"pl-k\"\u003e3\u0026gt;\u0026amp;1\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e1\u0026gt;\u0026amp;2\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e2\u0026gt;\u0026amp;3\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e)\u003c/span\u003e\u003c/span\u003e ;; ","    9) MIRROR_URL=\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e ;; ","\u003cspan class=\"pl-k\"\u003eesac\u003c/span\u003e","","\u003cspan class=\"pl-k\"\u003eif\u003c/span\u003e [ \u003cspan class=\"pl-k\"\u003e-n\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003cspan class=\"pl-smi\"\u003e$MIRROR_URL\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e ]\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ethen\u003c/span\u003e","    mkdir -p /etc/docker","    \u003cspan class=\"pl-k\"\u003eif\u003c/span\u003e [ \u003cspan class=\"pl-k\"\u003e-f\u003c/span\u003e /etc/docker/daemon.json ]\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ethen\u003c/span\u003e","        cp /etc/docker/daemon.json /etc/docker/daemon.json.bak","    \u003cspan class=\"pl-k\"\u003efi\u003c/span\u003e","    cat \u003cspan class=\"pl-k\"\u003e\u0026gt;\u003c/span\u003e /etc/docker/daemon.json \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-k\"\u003e\u0026lt;\u0026lt;\u003c/span\u003e\u003cspan class=\"pl-k\"\u003eEOF\u003c/span\u003e\u003c/span\u003e","\u003cspan class=\"pl-s\"\u003e{\u003c/span\u003e","\u003cspan class=\"pl-s\"\u003e    \u0026quot;dns\u0026quot;: [\u0026quot;8.8.8.8\u0026quot;, \u0026quot;114.114.114.114\u0026quot;],\u003c/span\u003e","\u003cspan class=\"pl-s\"\u003e    \u0026quot;registry-mirrors\u0026quot;: [\u0026quot;\u003cspan class=\"pl-smi\"\u003e$MIRROR_URL\u003c/span\u003e\u0026quot;]\u003c/span\u003e","\u003cspan class=\"pl-s\"\u003e}\u003c/span\u003e","\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-k\"\u003eEOF\u003c/span\u003e\u003c/span\u003e","    whiptail --title \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e配置成功\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e --msgbox \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e已成功添加镜像源: \u003cspan class=\"pl-smi\"\u003e$MIRROR_URL\u003c/span\u003e\\n请按Enter键重启Docker服务并继续...\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e 12 60","    \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e------------------------------------------------------------\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","    \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e开始重启Docker服务...\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","    systemctl restart docker.service","\u003cspan class=\"pl-k\"\u003efi\u003c/span\u003e","","\u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 创建安装目录\u003c/span\u003e","\u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e------------------------------------------------------------\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","\u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e开始创建安装目录...\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","\u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 检查并创建数据目录\u003c/span\u003e","\u003cspan class=\"pl-k\"\u003eif\u003c/span\u003e [ \u003cspan class=\"pl-k\"\u003e!\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e-d\u003c/span\u003e /opt/xiaozhi-server/data ]\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ethen\u003c/span\u003e","    mkdir -p /opt/xiaozhi-server/data","    \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e已创建数据目录: /opt/xiaozhi-server/data\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","\u003cspan class=\"pl-k\"\u003eelse\u003c/span\u003e","    \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e目录xiaozhi-server/data已存在，跳过创建\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","\u003cspan class=\"pl-k\"\u003efi\u003c/span\u003e","","\u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 检查并创建模型目录\u003c/span\u003e","\u003cspan class=\"pl-k\"\u003eif\u003c/span\u003e [ \u003cspan class=\"pl-k\"\u003e!\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e-d\u003c/span\u003e /opt/xiaozhi-server/models/SenseVoiceSmall ]\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ethen\u003c/span\u003e","    mkdir -p /opt/xiaozhi-server/models/SenseVoiceSmall","    \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e已创建模型目录: /opt/xiaozhi-server/models/SenseVoiceSmall\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","\u003cspan class=\"pl-k\"\u003eelse\u003c/span\u003e","    \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e目录xiaozhi-server/models/SenseVoiceSmall已存在，跳过创建\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","\u003cspan class=\"pl-k\"\u003efi\u003c/span\u003e","","\u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e------------------------------------------------------------\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","\u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e开始下载语音识别模型\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","\u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 下载模型文件\u003c/span\u003e","MODEL_PATH=\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e/opt/xiaozhi-server/models/SenseVoiceSmall/model.pt\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","\u003cspan class=\"pl-k\"\u003eif\u003c/span\u003e [ \u003cspan class=\"pl-k\"\u003e!\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e-f\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003cspan class=\"pl-smi\"\u003e$MODEL_PATH\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e ]\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ethen\u003c/span\u003e","    (","    \u003cspan class=\"pl-k\"\u003efor\u003c/span\u003e \u003cspan class=\"pl-smi\"\u003ei\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ein\u003c/span\u003e {1..20}\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003edo\u003c/span\u003e","        \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e$((\u003c/span\u003ei\u003cspan class=\"pl-k\"\u003e*\u003c/span\u003e\u003cspan class=\"pl-c1\"\u003e5\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e))\u003c/span\u003e\u003c/span\u003e","        sleep 0.1","    \u003cspan class=\"pl-k\"\u003edone\u003c/span\u003e","    ) \u003cspan class=\"pl-k\"\u003e|\u003c/span\u003e whiptail --title \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e下载中\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e --gauge \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e开始下载语音识别模型...\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e 10 60 0","    curl -fL --progress-bar https://modelscope.cn/models/iic/SenseVoiceSmall/resolve/master/model.pt -o \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003cspan class=\"pl-smi\"\u003e$MODEL_PATH\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e||\u003c/span\u003e {","        whiptail --title \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e错误\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e --msgbox \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003emodel.pt文件下载失败\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e 10 50","        \u003cspan class=\"pl-c1\"\u003eexit\u003c/span\u003e 1","    }","\u003cspan class=\"pl-k\"\u003eelse\u003c/span\u003e","    \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003emodel.pt文件已存在，跳过下载\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","\u003cspan class=\"pl-k\"\u003efi\u003c/span\u003e","","\u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 如果不是升级完成，才执行下载\u003c/span\u003e","\u003cspan class=\"pl-k\"\u003eif\u003c/span\u003e [ \u003cspan class=\"pl-k\"\u003e-z\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003cspan class=\"pl-smi\"\u003e$UPGRADE_COMPLETED\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e ]\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ethen\u003c/span\u003e","    check_and_download \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e/opt/xiaozhi-server/docker-compose_all.yml\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003ehttps://ghfast.top/https://raw.githubusercontent.com/xinnan-tech/xiaozhi-esp32-server/refs/heads/main/main/xiaozhi-server/docker-compose_all.yml\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","    check_and_download \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e/opt/xiaozhi-server/data/.config.yaml\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003ehttps://ghfast.top/https://raw.githubusercontent.com/xinnan-tech/xiaozhi-esp32-server/refs/heads/main/main/xiaozhi-server/config_from_api.yaml\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","\u003cspan class=\"pl-k\"\u003efi\u003c/span\u003e","","\u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 启动Docker服务\u003c/span\u003e","(","\u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e------------------------------------------------------------\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","\u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e正在拉取Docker镜像...\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","\u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e这可能需要几分钟时间，请耐心等待\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","docker_compose -f /opt/xiaozhi-server/docker-compose_all.yml up -d","","\u003cspan class=\"pl-k\"\u003eif\u003c/span\u003e [ \u003cspan class=\"pl-smi\"\u003e$?\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e-ne\u003c/span\u003e 0 ]\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ethen\u003c/span\u003e","    whiptail --title \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e错误\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e --msgbox \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003eDocker服务启动失败，请尝试更换镜像源后重新执行本脚本\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e 10 60","    \u003cspan class=\"pl-c1\"\u003eexit\u003c/span\u003e 1","\u003cspan class=\"pl-k\"\u003efi\u003c/span\u003e","","\u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e------------------------------------------------------------\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","\u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e正在检查服务启动状态...\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","TIMEOUT=300","START_TIME=\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e$(\u003c/span\u003edate +%s\u003cspan class=\"pl-pds\"\u003e)\u003c/span\u003e\u003c/span\u003e","\u003cspan class=\"pl-k\"\u003ewhile\u003c/span\u003e \u003cspan class=\"pl-c1\"\u003etrue\u003c/span\u003e\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003edo\u003c/span\u003e","    CURRENT_TIME=\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e$(\u003c/span\u003edate +%s\u003cspan class=\"pl-pds\"\u003e)\u003c/span\u003e\u003c/span\u003e","    \u003cspan class=\"pl-k\"\u003eif\u003c/span\u003e [ \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e$((\u003c/span\u003eCURRENT_TIME \u003cspan class=\"pl-k\"\u003e-\u003c/span\u003e START_TIME\u003cspan class=\"pl-pds\"\u003e))\u003c/span\u003e\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e-gt\u003c/span\u003e \u003cspan class=\"pl-smi\"\u003e$TIMEOUT\u003c/span\u003e ]\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ethen\u003c/span\u003e","        whiptail --title \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e错误\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e --msgbox \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e服务启动超时，未在指定时间内找到预期日志内容\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e 10 60","        \u003cspan class=\"pl-c1\"\u003eexit\u003c/span\u003e 1","    \u003cspan class=\"pl-k\"\u003efi\u003c/span\u003e","    ","    \u003cspan class=\"pl-k\"\u003eif\u003c/span\u003e docker logs xiaozhi-esp32-server-web \u003cspan class=\"pl-k\"\u003e2\u0026gt;\u0026amp;1\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e|\u003c/span\u003e grep -q \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003eStarted AdminApplication in\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ethen\u003c/span\u003e","        \u003cspan class=\"pl-c1\"\u003ebreak\u003c/span\u003e","    \u003cspan class=\"pl-k\"\u003efi\u003c/span\u003e","    sleep 1","\u003cspan class=\"pl-k\"\u003edone\u003c/span\u003e","","    \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e服务端启动成功！正在完成配置...\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","    \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e正在启动服务...\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","    docker_compose -f /opt/xiaozhi-server/docker-compose_all.yml up -d","    \u003cspan class=\"pl-c1\"\u003eecho\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e服务启动完成！\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e",")","","\u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 密钥配置\u003c/span\u003e","","\u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 获取服务器公网地址\u003c/span\u003e","PUBLIC_IP=\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e$(\u003c/span\u003eget_public_ip\u003cspan class=\"pl-pds\"\u003e)\u003c/span\u003e\u003c/span\u003e","whiptail --title \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e配置服务器密钥\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e --msgbox \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e请使用浏览器，访问下方链接，打开智控台并注册账号: \u003cspan class=\"pl-cce\"\u003e\\\u003c/span\u003e\u003c/span\u003e","\u003cspan class=\"pl-s\"\u003e\u003c/span\u003e","\u003cspan class=\"pl-s\"\u003e内网地址：http://127.0.0.1:8002/ \u003cspan class=\"pl-cce\"\u003e\\\u003c/span\u003e\u003c/span\u003e","\u003cspan class=\"pl-s\"\u003e\u003c/span\u003e","\u003cspan class=\"pl-s\"\u003e公网地址：http://\u003cspan class=\"pl-smi\"\u003e$PUBLIC_IP\u003c/span\u003e:8002/ (若是云服务器请在服务器安全组放行端口 8000 8001 8002)。\u003cspan class=\"pl-cce\"\u003e\\\u003c/span\u003e\u003c/span\u003e","\u003cspan class=\"pl-s\"\u003e\u003c/span\u003e","\u003cspan class=\"pl-s\"\u003e注册的第一个用户即是超级管理员，以后注册的用户都是普通用户。普通用户只能绑定设备和配置智能体; 超级管理员可以进行模型管理、用户管理、参数配置等功能。\u003cspan class=\"pl-cce\"\u003e\\\u003c/span\u003e\u003c/span\u003e","\u003cspan class=\"pl-s\"\u003e\u003c/span\u003e","\u003cspan class=\"pl-s\"\u003e注册好后请按Enter键继续\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e 18 70","SECRET_KEY=\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e$(\u003c/span\u003ewhiptail --title \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e配置服务器密钥\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e --inputbox \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e请使用超级管理员账号登录智控台\\n内网地址：http://127.0.0.1:8002/ \u003cspan class=\"pl-cce\"\u003e\\\u003c/span\u003e\u003c/span\u003e\u003c/span\u003e","\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-s\"\u003e公网地址：http://\u003cspan class=\"pl-smi\"\u003e$PUBLIC_IP\u003c/span\u003e:8002/\\n在顶部菜单 参数字典 → 参数管理 找到参数编码: server.secret (服务器密钥) \u003cspan class=\"pl-cce\"\u003e\\\u003c/span\u003e\u003c/span\u003e\u003c/span\u003e","\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-s\"\u003e复制该参数值并输入到下面输入框\\n\\n请输入密钥(留空则跳过配置):\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e 15 60 \u003cspan class=\"pl-k\"\u003e3\u0026gt;\u0026amp;1\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e1\u0026gt;\u0026amp;2\u003c/span\u003e \u003cspan class=\"pl-k\"\u003e2\u0026gt;\u0026amp;3\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e)\u003c/span\u003e\u003c/span\u003e","","\u003cspan class=\"pl-k\"\u003eif\u003c/span\u003e [ \u003cspan class=\"pl-k\"\u003e-n\u003c/span\u003e \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003cspan class=\"pl-smi\"\u003e$SECRET_KEY\u003c/span\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e ]\u003cspan class=\"pl-k\"\u003e;\u003c/span\u003e \u003cspan class=\"pl-k\"\u003ethen\u003c/span\u003e","    python3 -c \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","\u003cspan class=\"pl-s\"\u003eimport sys, yaml; \u003c/span\u003e","\u003cspan class=\"pl-s\"\u003econfig_path = \u0026#39;/opt/xiaozhi-server/data/.config.yaml\u0026#39;; \u003c/span\u003e","\u003cspan class=\"pl-s\"\u003ewith open(config_path, \u0026#39;r\u0026#39;) as f: \u003c/span\u003e","\u003cspan class=\"pl-s\"\u003e    config = yaml.safe_load(f) or {}; \u003c/span\u003e","\u003cspan class=\"pl-s\"\u003econfig[\u0026#39;manager-api\u0026#39;] = {\u0026#39;url\u0026#39;: \u0026#39;http://xiaozhi-esp32-server-web:8002/xiaozhi\u0026#39;, \u0026#39;secret\u0026#39;: \u0026#39;\u003cspan class=\"pl-smi\"\u003e$SECRET_KEY\u003c/span\u003e\u0026#39;}; \u003c/span\u003e","\u003cspan class=\"pl-s\"\u003ewith open(config_path, \u0026#39;w\u0026#39;) as f: \u003c/span\u003e","\u003cspan class=\"pl-s\"\u003e    yaml.dump(config, f); \u003c/span\u003e","\u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e","    docker restart xiaozhi-esp32-server","\u003cspan class=\"pl-k\"\u003efi\u003c/span\u003e","","\u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 修复日志文件获取不到ws的问题，改为硬编码\u003c/span\u003e","\u003cspan class=\"pl-c\"\u003e\u003cspan class=\"pl-c\"\u003e#\u003c/span\u003e 复用之前获取的PUBLIC_IP变量，避免重复调用API\u003c/span\u003e","whiptail --title \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e安装完成！\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e --msgbox \u003cspan class=\"pl-s\"\u003e\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003cspan class=\"pl-cce\"\u003e\\\u003c/span\u003e\u003c/span\u003e","\u003cspan class=\"pl-s\"\u003e服务端相关地址如下：\\n\u003cspan class=\"pl-cce\"\u003e\\\u003c/span\u003e\u003c/span\u003e","\u003cspan class=\"pl-s\"\u003e公网地址:\\n\u003cspan class=\"pl-cce\"\u003e\\\u003c/span\u003e\u003c/span\u003e","\u003cspan class=\"pl-s\"\u003e管理后台: http://\u003cspan class=\"pl-smi\"\u003e$PUBLIC_IP\u003c/span\u003e:8002\\n\u003cspan class=\"pl-cce\"\u003e\\\u003c/span\u003e\u003c/span\u003e","\u003cspan class=\"pl-s\"\u003eOTA: http://\u003cspan class=\"pl-smi\"\u003e$PUBLIC_IP\u003c/span\u003e:8002/xiaozhi/ota/\\n\u003cspan class=\"pl-cce\"\u003e\\\u003c/span\u003e\u003c/span\u003e","\u003cspan class=\"pl-s\"\u003e视觉分析接口: http://\u003cspan class=\"pl-smi\"\u003e$PUBLIC_IP\u003c/span\u003e:8003/mcp/vision/explain\\n\u003cspan class=\"pl-cce\"\u003e\\\u003c/span\u003e\u003c/span\u003e","\u003cspan class=\"pl-s\"\u003eWebSocket: ws://\u003cspan class=\"pl-smi\"\u003e$PUBLIC_IP\u003c/span\u003e:8000/xiaozhi/v1/\\n\u003cspan class=\"pl-cce\"\u003e\\\u003c/span\u003e\u003c/span\u003e","\u003cspan class=\"pl-s\"\u003e\\n安装完毕！感谢您的使用！\\n按Enter键退出...\u003cspan class=\"pl-pds\"\u003e\u0026quot;\u003c/span\u003e\u003c/span\u003e 20 70"],"csv":null,"csvError":null,"copilotSWEAgentEnabled":false,"dependabotInfo":{"showConfigurationBanner":false,"configFilePath":null,"networkDependabotPath":"/iiml33/Install_xiaozhi-server/network/updates","dismissConfigurationNoticePath":"/settings/dismiss-notice/dependabot_configuration_notice","configurationNoticeDismissed":false},"displayName":"install_whiptail.sh","displayUrl":"https://github.com/iiml33/Install_xiaozhi-server/blob/main/install_whiptail.sh?raw=true","headerInfo":{"blobSize":"17.8 KB","deleteTooltip":"Delete this file","editTooltip":"Edit this file","ghDesktopPath":"https://desktop.github.com","isGitLfs":false,"onBranch":true,"shortPath":"14bd21b","siteNavLoginPath":"/login?return_to=https%3A%2F%2Fgithub.com%2Fiiml33%2FInstall_xiaozhi-server%2Fblob%2Fmain%2Finstall_whiptail.sh","isCSV":false,"isRichtext":false,"toc":null,"lineInfo":{"truncatedLoc":"491","truncatedSloc":"426"},"mode":"file"},"image":false,"isCodeownersFile":null,"isPlain":false,"isValidLegacyIssueTemplate":false,"issueTemplate":null,"discussionTemplate":null,"language":"Shell","languageID":346,"large":false,"planSupportInfo":{"repoIsFork":null,"repoOwnedByCurrentUser":null,"requestFullPath":"/iiml33/Install_xiaozhi-server/blob/main/install_whiptail.sh","showFreeOrgGatedFeatureMessage":null,"showPlanSupportBanner":null,"upgradeDataAttributes":null,"upgradePath":null},"publishBannersInfo":{"dismissActionNoticePath":"/settings/dismiss-notice/publish_action_from_dockerfile","releasePath":"/iiml33/Install_xiaozhi-server/releases/new?marketplace=true","showPublishActionBanner":false},"rawBlobUrl":"https://github.com/iiml33/Install_xiaozhi-server/raw/refs/heads/main/install_whiptail.sh","renderImageOrRaw":false,"richText":null,"renderedFileInfo":null,"shortPath":null,"symbolsEnabled":true,"tabSize":4,"topBannersInfo":{"overridingGlobalFundingFile":false,"globalPreferredFundingPath":null,"showInvalidCitationWarning":false,"citationHelpUrl":"https://docs.github.com/github/creating-cloning-and-archiving-repositories/creating-a-repository-on-github/about-citation-files","actionsOnboardingTip":null},"truncated":false,"viewable":true,"workflowRedirectUrl":null,"symbols":{"timed_out":false,"not_analyzed":false,"symbols":[{"name":"handle_interrupt","kind":"function","ident_start":40,"ident_end":56,"extent_start":40,"extent_end":244,"fully_qualified_name":"handle_interrupt","ident_utf16":{"start":{"line_number":3,"utf16_col":0},"end":{"line_number":3,"utf16_col":16}},"extent_utf16":{"start":{"line_number":3,"utf16_col":0},"end":{"line_number":10,"utf16_col":1}}},{"name":"check_whiptail","kind":"function","ident_start":1464,"ident_end":1478,"extent_start":1464,"extent_end":1629,"fully_qualified_name":"check_whiptail","ident_utf16":{"start":{"line_number":38,"utf16_col":0},"end":{"line_number":38,"utf16_col":14}},"extent_utf16":{"start":{"line_number":38,"utf16_col":0},"end":{"line_number":44,"utf16_col":1}}},{"name":"check_and_download","kind":"function","ident_start":2474,"ident_end":2492,"extent_start":2474,"extent_end":2824,"fully_qualified_name":"check_and_download","ident_utf16":{"start":{"line_number":80,"utf16_col":0},"end":{"line_number":80,"utf16_col":18}},"extent_utf16":{"start":{"line_number":80,"utf16_col":0},"end":{"line_number":91,"utf16_col":1}}},{"name":"docker_compose","kind":"function","ident_start":2928,"ident_end":2942,"extent_start":2928,"extent_end":3519,"fully_qualified_name":"docker_compose","ident_utf16":{"start":{"line_number":94,"utf16_col":0},"end":{"line_number":94,"utf16_col":14}},"extent_utf16":{"start":{"line_number":94,"utf16_col":0},"end":{"line_number":114,"utf16_col":1}}},{"name":"get_public_ip","kind":"function","ident_start":3595,"ident_end":3608,"extent_start":3595,"extent_end":5960,"fully_qualified_name":"get_public_ip","ident_utf16":{"start":{"line_number":117,"utf16_col":0},"end":{"line_number":117,"utf16_col":13}},"extent_utf16":{"start":{"line_number":117,"utf16_col":0},"end":{"line_number":174,"utf16_col":1}}},{"name":"check_installed","kind":"function","ident_start":5986,"ident_end":6001,"extent_start":5986,"extent_end":6528,"fully_qualified_name":"check_installed","ident_utf16":{"start":{"line_number":177,"utf16_col":0},"end":{"line_number":177,"utf16_col":15}},"extent_utf16":{"start":{"line_number":177,"utf16_col":0},"end":{"line_number":198,"utf16_col":1}}}]}},"copilotInfo":null,"copilotAccessAllowed":true,"copilotSpacesEnabled":true,"modelsAccessAllowed":false,"modelsRepoIntegrationEnabled":false,"isMarketplaceEnabled":true,"csrf_tokens":{"/iiml33/Install_xiaozhi-server/branches":{"post":"Ds4mnlWLPq6P11VgWSKykIUb3h_Xa0uvRu-PjS9k_4hQK_Sbrhq8kyY3o-i_M__dq9rKL1uVwGpqo7BGU_T6IA"},"/repos/preferences":{"post":"ut-hSkZbj_0Ta2FbuXfVKJYrdp0ayZuNcDAbfubUmn4FhjHQvbTLHj9yNuaQMKxPWMr0PSDZWymR0Kt8WpAwsA"}}},"title":"Install_xiaozhi-server/install_whiptail.sh at main · iiml33/Install_xiaozhi-server","appPayload":{"helpUrl":"https://docs.github.com","findFileWorkerPath":"/assets-cdn/worker/find-file-worker-0cea8c6113ab.js","findInFileWorkerPath":"/assets-cdn/worker/find-in-file-worker-6dff47e16b7f.js","githubDevUrl":"https://github.dev/","enabled_features":{"code_nav_ui_events":false,"react_blob_overlay":true,"accessible_code_button":true}}}</script>
+  <div data-target="react-app.reactRoot"><style data-styled="true" data-styled-version="5.3.11">.jmjlbk{width:100%;}/*!sc*/
+@media screen and (min-width:544px){.jmjlbk{width:100%;}}/*!sc*/
+@media screen and (min-width:768px){.jmjlbk{width:auto;}}/*!sc*/
+.cIRiaH{max-height:100%;height:100%;display:-webkit-box;display:-webkit-flex;display:-ms-flexbox;display:flex;-webkit-flex-direction:column;-ms-flex-direction:column;flex-direction:column;}/*!sc*/
+@media screen and (max-width:768px){.cIRiaH{display:none;}}/*!sc*/
+@media screen and (min-width:768px){.cIRiaH{max-height:100vh;height:100vh;}}/*!sc*/
+.fvNWEZ{display:-webkit-box;display:-webkit-flex;display:-ms-flexbox;display:flex;width:100%;margin-bottom:16px;-webkit-align-items:center;-webkit-box-align:center;-ms-flex-align:center;align-items:center;}/*!sc*/
+@media screen and (max-width:768px){.bCYVKR{display:none;}}/*!sc*/
+.cybVuK{margin-left:auto;margin-right:auto;-webkit-flex-direction:column;-ms-flex-direction:column;flex-direction:column;padding-bottom:40px;max-width:100%;margin-top:0;}/*!sc*/
+.gSjuRy{display:inherit;}/*!sc*/
+.kfsEDb{display:-webkit-box;display:-webkit-flex;display:-ms-flexbox;display:flex;-webkit-flex-direction:row;-ms-flex-direction:row;flex-direction:row;font-size:16px;min-width:0;-webkit-flex-shrink:1;-ms-flex-negative:1;flex-shrink:1;-webkit-flex-wrap:wrap;-ms-flex-wrap:wrap;flex-wrap:wrap;max-width:100%;-webkit-align-items:center;-webkit-box-align:center;-ms-flex-align:center;align-items:center;}/*!sc*/
+.eLrlvS{max-width:100%;}/*!sc*/
+.fNzIif{max-width:100%;list-style:none;display:inline-block;}/*!sc*/
+.iRLfgU{display:inline-block;max-width:100%;}/*!sc*/
+.jyTWxL{margin-left:16px;margin-right:16px;}/*!sc*/
+.hGzGyY{display:-webkit-box;display:-webkit-flex;display:-ms-flexbox;display:flex;-webkit-flex-direction:row;-ms-flex-direction:row;flex-direction:row;}/*!sc*/
+.ekdrwn{width:100%;height:-webkit-fit-content;height:-moz-fit-content;height:fit-content;min-width:0;margin-right:16px;}/*!sc*/
+.fpyUWF{height:40px;padding-left:4px;padding-bottom:16px;}/*!sc*/
+.iafbuG{top:0px;z-index:4;background:var(--bgColor-default,var(--color-canvas-default));position:-webkit-sticky;position:sticky;}/*!sc*/
+.iNRqcN{display:none;min-width:0;padding-top:8px;padding-bottom:8px;}/*!sc*/
+.igwLyx{display:-webkit-box;display:-webkit-flex;display:-ms-flexbox;display:flex;-webkit-flex-direction:row;-ms-flex-direction:row;flex-direction:row;font-size:14px;min-width:0;-webkit-flex-shrink:1;-ms-flex-negative:1;flex-shrink:1;-webkit-flex-wrap:wrap;-ms-flex-wrap:wrap;flex-wrap:wrap;max-width:100%;-webkit-align-items:center;-webkit-box-align:center;-ms-flex-align:center;align-items:center;}/*!sc*/
+.koZdcA{border-radius:6px 6px 0px 0px;}/*!sc*/
+.doYuhf{border:1px solid;border-top:none;border-color:var(--borderColor-default,var(--color-border-default,#d0d7de));border-radius:0px 0px 6px 6px;min-width:273px;}/*!sc*/
+.hhuNfn{background-color:var(--bgColor-default,var(--color-canvas-default));border:0px;border-width:0;border-radius:0px 0px 6px 6px;padding:0;min-width:0;margin-top:46px;}/*!sc*/
+.hNuvaP{display:-webkit-box;display:-webkit-flex;display:-ms-flexbox;display:flex;-webkit-flex:1;-ms-flex:1;flex:1;padding-top:8px;padding-bottom:8px;-webkit-flex-direction:column;-ms-flex-direction:column;flex-direction:column;-webkit-box-pack:justify;-webkit-justify-content:space-between;-ms-flex-pack:justify;justify-content:space-between;min-width:0;position:relative;}/*!sc*/
+.kBkfpQ{position:relative;}/*!sc*/
+.lnfLer{-webkit-flex:1;-ms-flex:1;flex:1;position:relative;min-width:0;}/*!sc*/
+.djZnHX{tab-size:4;isolation:isolate;position:relative;overflow:auto;max-width:unset;}/*!sc*/
+.gTgIBo{margin:1px 8px;position:absolute;z-index:1;}/*!sc*/
+.bzYYiL{position:absolute;}/*!sc*/
+.kuJVuq{padding-bottom:33px;}/*!sc*/
+.cxWhiL{padding-top:8px;padding-bottom:8px;padding-left:16px;padding-right:16px;}/*!sc*/
+.fHoMbg{display:-webkit-box;display:-webkit-flex;display:-ms-flexbox;display:flex;-webkit-flex-direction:row;-ms-flex-direction:row;flex-direction:row;-webkit-box-pack:justify;-webkit-justify-content:space-between;-ms-flex-pack:justify;justify-content:space-between;}/*!sc*/
+.cnoVsg{font-size:14px;-webkit-order:1;-ms-flex-order:1;order:1;display:-webkit-box;display:-webkit-flex;display:-ms-flexbox;display:flex;-webkit-flex-direction:row;-ms-flex-direction:row;flex-direction:row;-webkit-box-pack:center;-webkit-justify-content:center;-ms-flex-pack:center;justify-content:center;-webkit-align-items:center;-webkit-box-align:center;-ms-flex-align:center;align-items:center;font-weight:600;}/*!sc*/
+.caOZLR{font-size:12px;color:var(--fgColor-muted,var(--color-fg-muted,#656d76));padding-top:8px;}/*!sc*/
+.cIntug{margin-right:6px;}/*!sc*/
+.dILSWH{margin-left:-16px;margin-bottom:-8px;}/*!sc*/
+.knbnik{margin-bottom:-8px;overflow-y:auto;max-height:calc(100vh - 237px);padding-left:16px;padding-bottom:8px;padding-top:4px;}/*!sc*/
+.iRVXIo{display:-webkit-box;display:-webkit-flex;display:-ms-flexbox;display:flex;}/*!sc*/
+.kOALiS{display:-webkit-box;display:-webkit-flex;display:-ms-flexbox;display:flex;-webkit-flex-direction:row;-ms-flex-direction:row;flex-direction:row;position:relative;margin-right:8px;}/*!sc*/
+.ihXXeg{background-color:var(--color-prettylights-syntax-entity,#6639ba);opacity:0.1;position:absolute;border-radius:5px;-webkit-align-items:stretch;-webkit-box-align:stretch;-ms-flex-align:stretch;align-items:stretch;display:-webkit-box;display:-webkit-flex;display:-ms-flexbox;display:flex;width:100%;height:100%;}/*!sc*/
+.bHnTee{color:var(--color-prettylights-syntax-entity,#6639ba);border-radius:5px;font-weight:600;font-size:smaller;padding-left:4px;padding-right:4px;padding-top:1px;padding-bottom:1px;}/*!sc*/
+.vdPNv{position:fixed;top:0;right:0;height:100%;width:15px;-webkit-transition:-webkit-transform 0.3s;-webkit-transition:transform 0.3s;transition:transform 0.3s;z-index:1;}/*!sc*/
+.vdPNv:hover{-webkit-transform:scaleX(1.5);-ms-transform:scaleX(1.5);transform:scaleX(1.5);}/*!sc*/
+data-styled.g1[id="Box-sc-62in7e-0"]{content:"jmjlbk,cIRiaH,fvNWEZ,bCYVKR,cybVuK,gSjuRy,kfsEDb,eLrlvS,fNzIif,iRLfgU,jyTWxL,hGzGyY,ekdrwn,fpyUWF,iafbuG,iNRqcN,igwLyx,koZdcA,doYuhf,hhuNfn,hNuvaP,kBkfpQ,lnfLer,djZnHX,gTgIBo,bzYYiL,kuJVuq,cxWhiL,fHoMbg,cnoVsg,caOZLR,cIntug,dILSWH,knbnik,iRVXIo,kOALiS,ihXXeg,bHnTee,vdPNv,"}/*!sc*/
+.hfSsoj[data-size="medium"][data-no-visuals]{display:none;}/*!sc*/
+data-styled.g16[id="Button__StyledButtonComponent-sc-vqy3e4-0"]{content:"hfSsoj,"}/*!sc*/
+.dWfbpP{font-size:16px;margin-left:8px;}/*!sc*/
+.hJQQvf{font-weight:600;display:inline-block;max-width:100%;font-size:16px;}/*!sc*/
+.cGzJbh{font-weight:600;display:inline-block;max-width:100%;font-size:14px;}/*!sc*/
+data-styled.g24[id="Heading-sc-1vc165i-0"]{content:"dWfbpP,hJQQvf,cGzJbh,"}/*!sc*/
+.bWhDnA[data-size="medium"][data-no-visuals]{border-top-left-radius:0;border-bottom-left-radius:0;}/*!sc*/
+.gXjFlG[data-size="small"][data-no-visuals]{border-top-left-radius:0;border-bottom-left-radius:0;}/*!sc*/
+.gRAczH[data-size="small"][data-no-visuals]:hover:not([disabled]){-webkit-text-decoration:none;text-decoration:none;}/*!sc*/
+.gRAczH[data-size="small"][data-no-visuals]:focus:not([disabled]){-webkit-text-decoration:none;text-decoration:none;}/*!sc*/
+.gRAczH[data-size="small"][data-no-visuals]:active:not([disabled]){-webkit-text-decoration:none;text-decoration:none;}/*!sc*/
+.eJnQTt[data-size="medium"][data-no-visuals]{-webkit-order:3;-ms-flex-order:3;order:3;color:var(--fgColor-default,var(--color-fg-default,#1F2328));margin-right:-8px;}/*!sc*/
+data-styled.g25[id="IconButton__StyledIconButton-sc-i53dt6-0"]{content:"bWhDnA,gXjFlG,gRAczH,eJnQTt,"}/*!sc*/
+.htWjsS{font-weight:600;}/*!sc*/
+data-styled.g27[id="Link__StyledLink-sc-1syctfj-0"]{content:"htWjsS,"}/*!sc*/
+.iwmTUC linkButtonSx:hover:not([disabled]){-webkit-text-decoration:none;text-decoration:none;}/*!sc*/
+.iwmTUC linkButtonSx:focus:not([disabled]){-webkit-text-decoration:none;text-decoration:none;}/*!sc*/
+.iwmTUC linkButtonSx:active:not([disabled]){-webkit-text-decoration:none;text-decoration:none;}/*!sc*/
+data-styled.g28[id="LinkButton-sc-1v6zkmg-0"]{content:"iwmTUC,"}/*!sc*/
+.cJjgAk{padding-left:4px;padding-right:4px;font-weight:400;color:var(--fgColor-muted,var(--color-fg-muted,#656d76));font-size:16px;}/*!sc*/
+.sPWzC{padding-left:4px;padding-right:4px;font-weight:400;color:var(--fgColor-muted,var(--color-fg-muted,#656d76));font-size:14px;}/*!sc*/
+data-styled.g37[id="Text__StyledText-sc-1klmep6-0"]{content:"cJjgAk,sPWzC,"}/*!sc*/
+.bLATi{margin-top:8px;border-radius:6px;}/*!sc*/
+data-styled.g39[id="TextInput__StyledTextInput-sc-ttxlvl-0"]{content:"bLATi,"}/*!sc*/
+.bkmqFA{max-width:180px;display:block;}/*!sc*/
+data-styled.g42[id="Truncate-sc-x3i4it-0"]{content:"bkmqFA,"}/*!sc*/
+</style><meta name="github-code-view-meta-stats" id="github-code-view-meta-stats" data-hydrostats="publish"/> <!-- --> <!-- --> <button hidden="" data-testid="header-permalink-button" data-hotkey-scope="read-only-cursor-text-area"></button><button hidden=""></button><div><div style="--spacing:var(--spacing-none)" class="prc-PageLayout-PageLayoutRoot--KH-d"><div class="prc-PageLayout-PageLayoutWrapper-2BhU2" data-width="full"><div class="prc-PageLayout-PageLayoutContent-BneH9"><div tabindex="0" class="Box-sc-62in7e-0 jmjlbk"><div class="prc-PageLayout-PaneWrapper-pHPop ReposFileTreePane-module__Pane--D26Sw ReposFileTreePane-module__HidePaneWithTreeOverlay--CJn2n" style="--offset-header:0px;--spacing-row:var(--spacing-none);--spacing-column:var(--spacing-none)" data-is-hidden="false" data-position="start" data-sticky="true"><div class="prc-PageLayout-HorizontalDivider-JLVqp prc-PageLayout-PaneHorizontalDivider-9tbnE" data-variant-regular="none" data-variant-narrow="none" data-position="start" style="--spacing-divider:var(--spacing-none);--spacing:var(--spacing-none)"></div><div class="prc-PageLayout-Pane-AyzHK" data-resizable="true" style="--spacing:var(--spacing-none);--pane-min-width:256px;--pane-max-width:calc(100vw - var(--pane-max-width-diff));--pane-width-size:var(--pane-width-large);--pane-width:320px"><div class="react-tree-pane-contents-3-panel"><div id="repos-file-tree" class="Box-sc-62in7e-0 cIRiaH"><div class="ReposFileTreePane-module__Box_1--ZT_4S"><div class="Box-sc-62in7e-0 fvNWEZ"><h2 class="use-tree-pane-module__Heading--iI_ad prc-Heading-Heading-MtWFE"><button type="button" aria-label="Expand file tree" data-testid="expand-file-tree-button-mobile" class="prc-Button-ButtonBase-9n-Xk ExpandFileTreeButton-module__Button_1--g8F6Q" data-loading="false" data-size="medium" data-variant="invisible" aria-describedby=":Rl6mplab:-loading-announcement"><span data-component="buttonContent" data-align="center" class="prc-Button-ButtonContent-Iohp5"><span data-component="leadingVisual" class="prc-Button-Visual-YNt2F prc-Button-VisualWrap-E4cnq"><svg aria-hidden="true" focusable="false" class="octicon octicon-arrow-left" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" display="inline-block" overflow="visible" style="vertical-align:text-bottom"><path d="M7.78 12.53a.75.75 0 0 1-1.06 0L2.47 8.28a.75.75 0 0 1 0-1.06l4.25-4.25a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042L4.81 7h7.44a.75.75 0 0 1 0 1.5H4.81l2.97 2.97a.75.75 0 0 1 0 1.06Z"></path></svg></span><span data-component="text" class="prc-Button-Label-FWkx3">Files</span></span></button><button data-component="IconButton" type="button" data-testid="collapse-file-tree-button" aria-expanded="true" aria-controls="repos-file-tree" class="prc-Button-ButtonBase-9n-Xk position-relative ExpandFileTreeButton-module__expandButton--oKI1R ExpandFileTreeButton-module__filesButtonBreakpoint--03FKA fgColor-muted prc-Button-IconButton-fyge7" data-loading="false" data-no-visuals="true" data-size="medium" data-variant="invisible" aria-describedby=":R756mplab:-loading-announcement" aria-labelledby=":R156mplab:"><svg aria-hidden="true" focusable="false" class="octicon octicon-sidebar-expand" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" display="inline-block" overflow="visible" style="vertical-align:text-bottom"><path d="m4.177 7.823 2.396-2.396A.25.25 0 0 1 7 5.604v4.792a.25.25 0 0 1-.427.177L4.177 8.177a.25.25 0 0 1 0-.354Z"></path><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v12.5A1.75 1.75 0 0 1 14.25 16H1.75A1.75 1.75 0 0 1 0 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25H9.5v-13Zm12.5 13a.25.25 0 0 0 .25-.25V1.75a.25.25 0 0 0-.25-.25H11v13Z"></path></svg></button><span class="prc-TooltipV2-Tooltip-tLeuB" data-direction="se" aria-hidden="true" id=":R156mplab:">Collapse file tree</span><button hidden="" data-testid="" data-hotkey-scope="read-only-cursor-text-area"></button></h2><h2 class="Heading-sc-1vc165i-0 dWfbpP">Files</h2></div><div class="ReposFileTreePane-module__Box_2--RgzGf"><div class="ReposFileTreePane-module__Box_3--XDLn8"><button type="button" aria-haspopup="true" aria-expanded="false" tabindex="0" style="min-width:0" aria-label="main branch" data-testid="anchor-button" class="prc-Button-ButtonBase-9n-Xk react-repos-tree-pane-ref-selector width-full ref-selector-class RefSelectorAnchoredOverlay-module__RefSelectorOverlayBtn--D34zl" data-loading="false" data-size="medium" data-variant="default" aria-describedby="ref-picker-repos-header-ref-selector-loading-announcement" id="ref-picker-repos-header-ref-selector"><span data-component="buttonContent" data-align="center" class="prc-Button-ButtonContent-Iohp5"><span data-component="text" class="prc-Button-Label-FWkx3"><div class="RefSelectorAnchoredOverlay-module__RefSelectorOverlayContainer--mCbv8"><div class="RefSelectorAnchoredOverlay-module__RefSelectorOverlayHeader--D4cnZ"><svg aria-hidden="true" focusable="false" class="octicon octicon-git-branch" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" display="inline-block" overflow="visible" style="vertical-align:text-bottom"><path d="M9.5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.251 2.251 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.5 0v1.836A2.493 2.493 0 0 1 6 7h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25Zm-6 0a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Zm8.25-.75a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM4.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z"></path></svg></div><div class="ref-selector-button-text-container RefSelectorAnchoredOverlay-module__RefSelectorBtnTextContainer--yO402"><span class="RefSelectorAnchoredOverlay-module__RefSelectorText--bxVhQ"> <!-- -->main</span></div></div></span><span data-component="trailingVisual" class="prc-Button-Visual-YNt2F prc-Button-VisualWrap-E4cnq"><svg aria-hidden="true" focusable="false" class="octicon octicon-triangle-down" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" display="inline-block" overflow="visible" style="vertical-align:text-bottom"><path d="m4.427 7.427 3.396 3.396a.25.25 0 0 0 .354 0l3.396-3.396A.25.25 0 0 0 11.396 7H4.604a.25.25 0 0 0-.177.427Z"></path></svg></span></span></button><button hidden="" data-testid="ref-selector-hotkey-button" data-hotkey-scope="read-only-cursor-text-area"></button></div><div class="ReposFileTreePane-module__Box_4--TLAAU"><a data-component="IconButton" type="button" class="prc-Button-ButtonBase-9n-Xk ReposFileTreePane-module__IconButton--fpuBk prc-Button-IconButton-fyge7" data-loading="false" data-no-visuals="true" data-size="medium" data-variant="default" aria-describedby=":R6q6mplab:-loading-announcement" aria-labelledby=":Rq6mplab:" href="/iiml33/Install_xiaozhi-server/new/main" data-discover="true"><svg aria-hidden="true" focusable="false" class="octicon octicon-plus" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" display="inline-block" overflow="visible" style="vertical-align:text-bottom"><path d="M7.75 2a.75.75 0 0 1 .75.75V7h4.25a.75.75 0 0 1 0 1.5H8.5v4.25a.75.75 0 0 1-1.5 0V8.5H2.75a.75.75 0 0 1 0-1.5H7V2.75A.75.75 0 0 1 7.75 2Z"></path></svg></a><span class="prc-TooltipV2-Tooltip-tLeuB" data-direction="n" aria-hidden="true" id=":Rq6mplab:">Add file</span><button data-component="IconButton" type="button" class="prc-Button-ButtonBase-9n-Xk IconButton__StyledIconButton-sc-i53dt6-0 bWhDnA SearchButton-module__IconButton--kxA3Q prc-Button-IconButton-fyge7" data-loading="false" data-no-visuals="true" data-size="medium" data-variant="default" aria-describedby=":Rra6mplab:-loading-announcement" aria-labelledby=":R3a6mplab:"><svg aria-hidden="true" focusable="false" class="octicon octicon-search" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" display="inline-block" overflow="visible" style="vertical-align:text-bottom"><path d="M10.68 11.74a6 6 0 0 1-7.922-8.982 6 6 0 0 1 8.982 7.922l3.04 3.04a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215ZM11.5 7a4.499 4.499 0 1 0-8.997 0A4.499 4.499 0 0 0 11.5 7Z"></path></svg></button><span class="prc-TooltipV2-Tooltip-tLeuB" data-direction="nw" aria-hidden="true" id=":R3a6mplab:">Search this repository</span><button hidden="" data-testid="" data-hotkey-scope="read-only-cursor-text-area"></button></div></div></div><div class="Box-sc-62in7e-0 bCYVKR ReposFileTreePane-module__FileResultsList--YEf_n"><span class="TextInput__StyledTextInput-sc-ttxlvl-0 d-flex FileResultsList-module__FilesSearchBox--fSAh3 TextInput-wrapper prc-components-TextInputWrapper-Hpdqi prc-components-TextInputBaseWrapper-wY-n0" data-leading-visual="true" data-trailing-visual="true" aria-busy="false"><span class="TextInput-icon" id=":R5amplab:" aria-hidden="true"><svg aria-hidden="true" focusable="false" class="octicon octicon-search" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" display="inline-block" overflow="visible" style="vertical-align:text-bottom"><path d="M10.68 11.74a6 6 0 0 1-7.922-8.982 6 6 0 0 1 8.982 7.922l3.04 3.04a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215ZM11.5 7a4.499 4.499 0 1 0-8.997 0A4.499 4.499 0 0 0 11.5 7Z"></path></svg></span><input type="text" aria-label="Go to file" role="combobox" aria-controls="file-results-list" aria-expanded="false" aria-haspopup="dialog" autoCorrect="off" spellcheck="false" placeholder="Go to file" aria-describedby=":R5amplab: :R5amplabH1:" data-component="input" class="prc-components-Input-IwWrt" value=""/><span class="TextInput-icon" id=":R5amplabH1:" aria-hidden="true"><kbd>t</kbd></span></span></div><button hidden="" data-testid="" data-hotkey-scope="read-only-cursor-text-area"></button><button hidden=""></button><div class="Box-sc-62in7e-0 bCYVKR ReposFileTreePane-module__Box_5--cckih"><div class="react-tree-show-tree-items"><div class="ReposFileTreeView-module__Box--bDodO" data-testid="repos-file-tree-container"><nav aria-label="File Tree Navigation"><span class="prc-src-InternalVisuallyHidden-2YaI6"><div></div></span><ul role="tree" aria-label="Files" data-truncate-text="true" class="prc-TreeView-TreeViewRootUlStyles-Mzrmj"><li class="PRIVATE_TreeView-item prc-TreeView-TreeViewItem-Ter5f" tabindex="0" id="README.md-item" role="treeitem" aria-labelledby=":R3pimplab:" aria-describedby=":R3pimplabH1:" aria-level="1" aria-selected="false"><div class="PRIVATE_TreeView-item-container prc-TreeView-TreeViewItemContainer-z6qqQ" style="--level:1;content-visibility:auto;contain-intrinsic-size:auto 2rem"><div style="grid-area:spacer;display:flex"><div style="width:100%;display:flex"></div></div><div id=":R3pimplab:" class="PRIVATE_TreeView-item-content prc-TreeView-TreeViewItemContent-RKsCI"><div class="PRIVATE_VisuallyHidden prc-TreeView-TreeViewVisuallyHidden-1N8xK" aria-hidden="true" id=":R3pimplabH1:"></div><div class="PRIVATE_TreeView-item-visual prc-TreeView-TreeViewItemVisual-naWzj" aria-hidden="true"><svg aria-hidden="true" focusable="false" class="octicon octicon-file" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" display="inline-block" overflow="visible" style="vertical-align:text-bottom"><path d="M2 1.75C2 .784 2.784 0 3.75 0h6.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v9.586A1.75 1.75 0 0 1 13.25 16h-9.5A1.75 1.75 0 0 1 2 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25h9.5a.25.25 0 0 0 .25-.25V6h-2.75A1.75 1.75 0 0 1 9 4.25V1.5Zm6.75.062V4.25c0 .138.112.25.25.25h2.688l-.011-.013-2.914-2.914-.013-.011Z"></path></svg></div><span class="PRIVATE_TreeView-item-content-text prc-TreeView-TreeViewItemContentText-FFaKp"><span>README.md</span></span></div></div></li><li class="PRIVATE_TreeView-item prc-TreeView-TreeViewItem-Ter5f" tabindex="0" id="install_whiptail.sh-item" role="treeitem" aria-labelledby=":R5pimplab:" aria-describedby=":R5pimplabH1:" aria-level="1" aria-current="true" aria-selected="false"><div class="PRIVATE_TreeView-item-container prc-TreeView-TreeViewItemContainer-z6qqQ" style="--level:1"><div style="grid-area:spacer;display:flex"><div style="width:100%;display:flex"></div></div><div id=":R5pimplab:" class="PRIVATE_TreeView-item-content prc-TreeView-TreeViewItemContent-RKsCI"><div class="PRIVATE_VisuallyHidden prc-TreeView-TreeViewVisuallyHidden-1N8xK" aria-hidden="true" id=":R5pimplabH1:"></div><div class="PRIVATE_TreeView-item-visual prc-TreeView-TreeViewItemVisual-naWzj" aria-hidden="true"><svg aria-hidden="true" focusable="false" class="octicon octicon-file" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" display="inline-block" overflow="visible" style="vertical-align:text-bottom"><path d="M2 1.75C2 .784 2.784 0 3.75 0h6.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v9.586A1.75 1.75 0 0 1 13.25 16h-9.5A1.75 1.75 0 0 1 2 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25h9.5a.25.25 0 0 0 .25-.25V6h-2.75A1.75 1.75 0 0 1 9 4.25V1.5Zm6.75.062V4.25c0 .138.112.25.25.25h2.688l-.011-.013-2.914-2.914-.013-.011Z"></path></svg></div><span class="PRIVATE_TreeView-item-content-text prc-TreeView-TreeViewItemContentText-FFaKp"><span>install_whiptail.sh</span></span></div></div></li></ul></nav></div></div></div></div></div></div><div class="prc-PageLayout-VerticalDivider-9QRmK prc-PageLayout-PaneVerticalDivider-le57g" data-variant-narrow="none" data-variant-regular="line" data-variant-wide="line" data-position="start" style="--spacing:var(--spacing-none)"><div class="prc-PageLayout-DraggableHandle-9s6B4" role="slider" aria-label="Draggable pane splitter" aria-valuemin="256" aria-valuemax="600" aria-valuenow="320" aria-valuetext="Pane width 320 pixels" tabindex="0"></div></div></div></div><div class="prc-PageLayout-ContentWrapper-gR9eG CodeView-module__SplitPageLayout_Content--qxR1C" data-is-hidden-narrow="true"><div class="prc-PageLayout-Content-xWL-A" data-width="full" style="--spacing:var(--spacing-none)"><div data-selector="repos-split-pane-content" tabindex="0" class="Box-sc-62in7e-0 cybVuK"><div class="Box-sc-62in7e-0 gSjuRy"><div class="container CodeViewHeader-module__Box--PofRM"><div class="px-3 pt-3 pb-0" id="StickyHeader"><div class="CodeViewHeader-module__Box_1--KpLzV"><div class="CodeViewHeader-module__Box_2--xzDOt"><div class="CodeViewHeader-module__Box_6--iStzT"><div class="Box-sc-62in7e-0 kfsEDb"><nav data-testid="breadcrumbs" aria-labelledby="repos-header-breadcrumb--wide-heading" id="repos-header-breadcrumb--wide" class="Box-sc-62in7e-0 eLrlvS"><h2 class="sr-only ScreenReaderHeading-module__userSelectNone--vlUbc prc-Heading-Heading-MtWFE" data-testid="screen-reader-heading" id="repos-header-breadcrumb--wide-heading">Breadcrumbs</h2><ol class="Box-sc-62in7e-0 fNzIif"><li class="Box-sc-62in7e-0 iRLfgU"><a class="Link__StyledLink-sc-1syctfj-0 htWjsS prc-Link-Link-9ZwDx" data-testid="breadcrumbs-repo-link" href="/iiml33/Install_xiaozhi-server/tree/main" data-discover="true">Install_xiaozhi-server</a></li></ol></nav><div data-testid="breadcrumbs-filename" class="Box-sc-62in7e-0 iRLfgU"><span class="Text__StyledText-sc-1klmep6-0 cJjgAk prc-Text-Text-9mHv3" aria-hidden="true">/</span><h1 tabindex="-1" id="file-name-id-wide" class="Heading-sc-1vc165i-0 hJQQvf">install_whiptail.sh</h1></div><button data-component="IconButton" type="button" class="prc-Button-ButtonBase-9n-Xk ml-2 prc-Button-IconButton-fyge7" data-loading="false" data-no-visuals="true" data-size="small" data-variant="invisible" aria-describedby=":R3nb9lab:-loading-announcement" aria-labelledby=":R3b9lab:"><svg aria-hidden="true" focusable="false" class="octicon octicon-copy" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" display="inline-block" overflow="visible" style="vertical-align:text-bottom"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Z"></path><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"></path></svg></button><span class="Box-sc-62in7e-0 CopyToClipboardButton-module__tooltip--HDUYz prc-TooltipV2-Tooltip-tLeuB" data-direction="nw" aria-label="Copy path" aria-hidden="true" id=":R3b9lab:">Copy path</span></div></div><div class="react-code-view-header-element--wide"><div class="CodeViewHeader-module__Box_7--FZfkg"><div class="d-flex gap-2"> <button hidden="" data-testid="" data-hotkey-scope="read-only-cursor-text-area"></button><button hidden=""></button><button hidden="" data-testid="" data-hotkey-scope="read-only-cursor-text-area"></button><button hidden=""></button><button type="button" class="prc-Button-ButtonBase-9n-Xk Button__StyledButtonComponent-sc-vqy3e4-0 hfSsoj NavigationMenu-module__Button--SJihq" data-loading="false" data-no-visuals="true" data-size="medium" data-variant="default" aria-describedby=":R1ahj9lab:-loading-announcement"><span data-component="buttonContent" data-align="center" class="prc-Button-ButtonContent-Iohp5"><span data-component="text" class="prc-Button-Label-FWkx3">Blame</span></span></button><button hidden="" data-testid="" data-hotkey-scope="read-only-cursor-text-area"></button><button data-component="IconButton" type="button" data-testid="more-file-actions-button-nav-menu-wide" aria-haspopup="true" aria-expanded="false" tabindex="0" class="prc-Button-ButtonBase-9n-Xk js-blob-dropdown-click NavigationMenu-module__IconButton--NqJ_L prc-Button-IconButton-fyge7" data-loading="false" data-no-visuals="true" data-size="medium" data-variant="default" aria-describedby=":Rihj9lab:-loading-announcement" aria-labelledby=":Rfihj9lab:" id=":Rihj9lab:"><svg aria-hidden="true" focusable="false" class="octicon octicon-kebab-horizontal" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" display="inline-block" overflow="visible" style="vertical-align:text-bottom"><path d="M8 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM1.5 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Zm13 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z"></path></svg></button><span class="prc-TooltipV2-Tooltip-tLeuB" data-direction="nw" aria-hidden="true" id=":Rfihj9lab:">More file actions</span> </div></div></div><div class="react-code-view-header-element--narrow"><div class="CodeViewHeader-module__Box_7--FZfkg"><div class="d-flex gap-2"> <button hidden="" data-testid="" data-hotkey-scope="read-only-cursor-text-area"></button><button hidden=""></button><button hidden="" data-testid="" data-hotkey-scope="read-only-cursor-text-area"></button><button hidden=""></button><button type="button" class="prc-Button-ButtonBase-9n-Xk Button__StyledButtonComponent-sc-vqy3e4-0 hfSsoj NavigationMenu-module__Button--SJihq" data-loading="false" data-no-visuals="true" data-size="medium" data-variant="default" aria-describedby=":R1ahr9lab:-loading-announcement"><span data-component="buttonContent" data-align="center" class="prc-Button-ButtonContent-Iohp5"><span data-component="text" class="prc-Button-Label-FWkx3">Blame</span></span></button><button hidden="" data-testid="" data-hotkey-scope="read-only-cursor-text-area"></button><button data-component="IconButton" type="button" data-testid="more-file-actions-button-nav-menu-narrow" aria-haspopup="true" aria-expanded="false" tabindex="0" class="prc-Button-ButtonBase-9n-Xk js-blob-dropdown-click NavigationMenu-module__IconButton--NqJ_L prc-Button-IconButton-fyge7" data-loading="false" data-no-visuals="true" data-size="medium" data-variant="default" aria-describedby=":Rihr9lab:-loading-announcement" aria-labelledby=":Rfihr9lab:" id=":Rihr9lab:"><svg aria-hidden="true" focusable="false" class="octicon octicon-kebab-horizontal" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" display="inline-block" overflow="visible" style="vertical-align:text-bottom"><path d="M8 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM1.5 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Zm13 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z"></path></svg></button><span class="prc-TooltipV2-Tooltip-tLeuB" data-direction="nw" aria-hidden="true" id=":Rfihr9lab:">More file actions</span> </div></div></div></div></div></div></div></div><div class="Box-sc-62in7e-0 jyTWxL react-code-view-bottom-padding"> <div class="BlobTopBanners-module__Box--g_bGk"></div> <!-- --> <!-- --> </div><div class="Box-sc-62in7e-0 jyTWxL"> <!-- --> <!-- --> <button hidden="" data-testid="" data-hotkey-scope="read-only-cursor-text-area"></button><button hidden=""></button><div class="d-flex flex-column border rounded-2 mb-3 pl-1"><div class="LatestCommit-module__Box--Fimpo"><h2 class="sr-only ScreenReaderHeading-module__userSelectNone--vlUbc prc-Heading-Heading-MtWFE" data-testid="screen-reader-heading">Latest commit</h2><div style="width:120px" class="Skeleton Skeleton--text" data-testid="loading"> </div><div class="d-flex flex-shrink-0 gap-2"><div data-testid="latest-commit-details" class="d-none d-sm-flex flex-items-center"></div><div class="d-flex gap-2"><h2 class="sr-only ScreenReaderHeading-module__userSelectNone--vlUbc prc-Heading-Heading-MtWFE" data-testid="screen-reader-heading">History</h2><a href="/iiml33/Install_xiaozhi-server/commits/main/install_whiptail.sh" class="prc-Button-ButtonBase-9n-Xk d-none d-lg-flex LinkButton-module__code-view-link-button--thtqc flex-items-center fgColor-default" data-loading="false" data-size="small" data-variant="invisible" aria-describedby=":R2mlal9lab:-loading-announcement"><span data-component="buttonContent" data-align="center" class="prc-Button-ButtonContent-Iohp5"><span data-component="leadingVisual" class="prc-Button-Visual-YNt2F prc-Button-VisualWrap-E4cnq"><svg aria-hidden="true" focusable="false" class="octicon octicon-history" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" display="inline-block" overflow="visible" style="vertical-align:text-bottom"><path d="m.427 1.927 1.215 1.215a8.002 8.002 0 1 1-1.6 5.685.75.75 0 1 1 1.493-.154 6.5 6.5 0 1 0 1.18-4.458l1.358 1.358A.25.25 0 0 1 3.896 6H.25A.25.25 0 0 1 0 5.75V2.104a.25.25 0 0 1 .427-.177ZM7.75 4a.75.75 0 0 1 .75.75v2.992l2.028.812a.75.75 0 0 1-.557 1.392l-2.5-1A.751.751 0 0 1 7 8.25v-3.5A.75.75 0 0 1 7.75 4Z"></path></svg></span><span data-component="text" class="prc-Button-Label-FWkx3"><span class="fgColor-default">History</span></span></span></a><div class="d-sm-none"></div><div class="d-flex d-lg-none"><span role="tooltip" aria-label="History" id="history-icon-button-tooltip" class="prc-Tooltip-Tooltip-JLsri prc-Tooltip-Tooltip--n-SqCQ- tooltipped-n"><a aria-label="View commit history for this file." href="/iiml33/Install_xiaozhi-server/commits/main/install_whiptail.sh" class="prc-Button-ButtonBase-9n-Xk LinkButton-module__code-view-link-button--thtqc flex-items-center fgColor-default" data-loading="false" data-size="small" data-variant="invisible" aria-describedby=":Rcmlal9lab:-loading-announcement history-icon-button-tooltip"><span data-component="buttonContent" data-align="center" class="prc-Button-ButtonContent-Iohp5"><span data-component="leadingVisual" class="prc-Button-Visual-YNt2F prc-Button-VisualWrap-E4cnq"><svg aria-hidden="true" focusable="false" class="octicon octicon-history" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" display="inline-block" overflow="visible" style="vertical-align:text-bottom"><path d="m.427 1.927 1.215 1.215a8.002 8.002 0 1 1-1.6 5.685.75.75 0 1 1 1.493-.154 6.5 6.5 0 1 0 1.18-4.458l1.358 1.358A.25.25 0 0 1 3.896 6H.25A.25.25 0 0 1 0 5.75V2.104a.25.25 0 0 1 .427-.177ZM7.75 4a.75.75 0 0 1 .75.75v2.992l2.028.812a.75.75 0 0 1-.557 1.392l-2.5-1A.751.751 0 0 1 7 8.25v-3.5A.75.75 0 0 1 7.75 4Z"></path></svg></span></span></a></span></div></div></div></div></div><div class="Box-sc-62in7e-0 hGzGyY"><div class="Box-sc-62in7e-0 ekdrwn container"><div class="Box-sc-62in7e-0 fpyUWF react-code-size-details-banner"><div class="react-code-size-details-banner CodeSizeDetails-module__Box--QdxnQ"><div class="text-mono CodeSizeDetails-module__Box_1--_uFDs"><div data-testid="blob-size" class="CodeSizeDetails-module__Truncate_1--er0Uk prc-Truncate-Truncate-2G1eo" data-inline="true" title="17.8 KB" style="--truncate-max-width:100%"><span>491 lines (426 loc) · 17.8 KB</span></div></div></div></div><div class="Box-sc-62in7e-0 iafbuG react-blob-view-header-sticky" id="repos-sticky-header"><div class="BlobViewHeader-module__Box--pvsIA"><div class="react-blob-sticky-header"><div class="Box-sc-62in7e-0 iNRqcN"><div class="FileNameStickyHeader-module__Box_5--xBJ2J"><div class="Box-sc-62in7e-0 igwLyx"><nav data-testid="breadcrumbs" aria-labelledby="sticky-breadcrumb-heading" id="sticky-breadcrumb" class="Box-sc-62in7e-0 eLrlvS"><h2 class="sr-only ScreenReaderHeading-module__userSelectNone--vlUbc prc-Heading-Heading-MtWFE" data-testid="screen-reader-heading" id="sticky-breadcrumb-heading">Breadcrumbs</h2><ol class="Box-sc-62in7e-0 fNzIif"><li class="Box-sc-62in7e-0 iRLfgU"><a class="Link__StyledLink-sc-1syctfj-0 htWjsS prc-Link-Link-9ZwDx" data-testid="breadcrumbs-repo-link" href="/iiml33/Install_xiaozhi-server/tree/main" data-discover="true">Install_xiaozhi-server</a></li></ol></nav><div data-testid="breadcrumbs-filename" class="Box-sc-62in7e-0 iRLfgU"><span class="Text__StyledText-sc-1klmep6-0 sPWzC prc-Text-Text-9mHv3" aria-hidden="true">/</span><h1 tabindex="-1" id="sticky-file-name-id" class="Heading-sc-1vc165i-0 cGzJbh">install_whiptail.sh</h1></div></div><button type="button" class="prc-Button-ButtonBase-9n-Xk Button__StyledButtonComponent-sc-vqy3e4-0 FileNameStickyHeader-module__Button--SaiiH FileNameStickyHeader-module__GoToTopButton--9lB4x" data-loading="false" data-size="small" data-variant="invisible" aria-describedby=":R9cpal9lab:-loading-announcement"><span data-component="buttonContent" data-align="center" class="prc-Button-ButtonContent-Iohp5"><span data-component="leadingVisual" class="prc-Button-Visual-YNt2F prc-Button-VisualWrap-E4cnq"><svg aria-hidden="true" focusable="false" class="octicon octicon-arrow-up" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" display="inline-block" overflow="visible" style="vertical-align:text-bottom"><path d="M3.47 7.78a.75.75 0 0 1 0-1.06l4.25-4.25a.75.75 0 0 1 1.06 0l4.25 4.25a.751.751 0 0 1-.018 1.042.751.751 0 0 1-1.042.018L9 4.81v7.44a.75.75 0 0 1-1.5 0V4.81L4.53 7.78a.75.75 0 0 1-1.06 0Z"></path></svg></span><span data-component="text" class="prc-Button-Label-FWkx3">Top</span></span></button></div></div></div><div class="Box-sc-62in7e-0 koZdcA BlobViewHeader-module__Box_1--PPihg"><h2 class="sr-only ScreenReaderHeading-module__userSelectNone--vlUbc prc-Heading-Heading-MtWFE" data-testid="screen-reader-heading">File metadata and controls</h2><div class="BlobViewHeader-module__Box_2--G_jCG"><ul aria-label="File view" class="prc-SegmentedControl-SegmentedControl-lqIXp BlobTabButtons-module__SegmentedControl--JMGov" data-variant="default" data-size="small"><li class="prc-SegmentedControl-Item-tSCQh" data-selected=""><button aria-current="true" class="prc-SegmentedControl-Button-E48xz" type="button" style="--separator-color:transparent"><span class="prc-SegmentedControl-Content-1COlk segmentedControl-content"><div class="prc-SegmentedControl-Text-7S2y2 segmentedControl-text" data-text="Code">Code</div></span></button></li><li class="prc-SegmentedControl-Item-tSCQh"><button aria-current="false" class="prc-SegmentedControl-Button-E48xz" type="button" style="--separator-color:var(--borderColor-default)"><span class="prc-SegmentedControl-Content-1COlk segmentedControl-content"><div class="prc-SegmentedControl-Text-7S2y2 segmentedControl-text" data-text="Blame">Blame</div></span></button></li></ul><button hidden="" data-testid="" data-hotkey-scope="read-only-cursor-text-area"></button><button hidden="" data-testid="" data-hotkey-scope="read-only-cursor-text-area"></button><div class="react-code-size-details-in-header CodeSizeDetails-module__Box--QdxnQ"><div class="text-mono CodeSizeDetails-module__Box_1--_uFDs"><div data-testid="blob-size" class="CodeSizeDetails-module__Truncate_1--er0Uk prc-Truncate-Truncate-2G1eo" data-inline="true" title="17.8 KB" style="--truncate-max-width:100%"><span>491 lines (426 loc) · 17.8 KB</span></div></div></div></div><div class="BlobViewHeader-module__Box_3--Kvpex"><button data-component="IconButton" type="button" aria-haspopup="true" aria-expanded="false" tabindex="0" class="prc-Button-ButtonBase-9n-Xk prc-Button-IconButton-fyge7" data-loading="false" data-no-visuals="true" data-size="small" data-variant="default" aria-describedby=":R39ucpal9lab:-loading-announcement" aria-labelledby=":Rr9ucpal9lab:" id=":R39ucpal9lab:"><svg aria-hidden="true" focusable="false" class="octicon octicon-space" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" display="inline-block" overflow="visible" style="vertical-align:text-bottom"><path d="M0 13.25V2.75C0 1.784.784 1 1.75 1H5c.551 0 1.07.26 1.4.7l.9 1.2a.25.25 0 0 0 .2.1h6.75c.966 0 1.75.784 1.75 1.75v3.638a.75.75 0 0 1-1.5 0V4.75a.25.25 0 0 0-.25-.25H7.5a1.75 1.75 0 0 1-1.4-.7l-.9-1.2a.25.25 0 0 0-.2-.1H1.75a.25.25 0 0 0-.25.25v10.5c0 .138.112.25.25.25h5.663l.076.004a.75.75 0 0 1 0 1.492L7.413 15H1.75A1.75 1.75 0 0 1 0 13.25Z"></path><path d="M12.265 9.16a.248.248 0 0 1 .467 0l.237.649a3.726 3.726 0 0 0 2.219 2.218l.649.238a.249.249 0 0 1 0 .467l-.649.237a3.728 3.728 0 0 0-2.219 2.219l-.237.649a.249.249 0 0 1-.467 0l-.238-.649a3.726 3.726 0 0 0-2.218-2.219l-.649-.237a.248.248 0 0 1 0-.467l.649-.238a3.725 3.725 0 0 0 2.218-2.218l.238-.649Z"></path></svg></button><span class="prc-TooltipV2-Tooltip-tLeuB" data-direction="n" aria-hidden="true" id=":Rr9ucpal9lab:">Add to space</span><button data-component="IconButton" type="button" data-testid="copilot-ask-menu" class="prc-Button-ButtonBase-9n-Xk prc-Button-IconButton-fyge7" data-loading="false" data-no-visuals="true" data-size="small" data-variant="default" aria-describedby="blob-view-header-copilot-icon-loading-announcement" aria-labelledby=":R2ecpal9lab:" id="blob-view-header-copilot-icon"><svg aria-hidden="true" focusable="false" class="octicon octicon-copilot" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" display="inline-block" overflow="visible" style="vertical-align:text-bottom"><path d="M7.998 15.035c-4.562 0-7.873-2.914-7.998-3.749V9.338c.085-.628.677-1.686 1.588-2.065.013-.07.024-.143.036-.218.029-.183.06-.384.126-.612-.201-.508-.254-1.084-.254-1.656 0-.87.128-1.769.693-2.484.579-.733 1.494-1.124 2.724-1.261 1.206-.134 2.262.034 2.944.765.05.053.096.108.139.165.044-.057.094-.112.143-.165.682-.731 1.738-.899 2.944-.765 1.23.137 2.145.528 2.724 1.261.566.715.693 1.614.693 2.484 0 .572-.053 1.148-.254 1.656.066.228.098.429.126.612.012.076.024.148.037.218.924.385 1.522 1.471 1.591 2.095v1.872c0 .766-3.351 3.795-8.002 3.795Zm0-1.485c2.28 0 4.584-1.11 5.002-1.433V7.862l-.023-.116c-.49.21-1.075.291-1.727.291-1.146 0-2.059-.327-2.71-.991A3.222 3.222 0 0 1 8 6.303a3.24 3.24 0 0 1-.544.743c-.65.664-1.563.991-2.71.991-.652 0-1.236-.081-1.727-.291l-.023.116v4.255c.419.323 2.722 1.433 5.002 1.433ZM6.762 2.83c-.193-.206-.637-.413-1.682-.297-1.019.113-1.479.404-1.713.7-.247.312-.369.789-.369 1.554 0 .793.129 1.171.308 1.371.162.181.519.379 1.442.379.853 0 1.339-.235 1.638-.54.315-.322.527-.827.617-1.553.117-.935-.037-1.395-.241-1.614Zm4.155-.297c-1.044-.116-1.488.091-1.681.297-.204.219-.359.679-.242 1.614.091.726.303 1.231.618 1.553.299.305.784.54 1.638.54.922 0 1.28-.198 1.442-.379.179-.2.308-.578.308-1.371 0-.765-.123-1.242-.37-1.554-.233-.296-.693-.587-1.713-.7Z"></path><path d="M6.25 9.037a.75.75 0 0 1 .75.75v1.501a.75.75 0 0 1-1.5 0V9.787a.75.75 0 0 1 .75-.75Zm4.25.75v1.501a.75.75 0 0 1-1.5 0V9.787a.75.75 0 0 1 1.5 0Z"></path></svg></button><span class="prc-TooltipV2-Tooltip-tLeuB" data-direction="n" aria-hidden="true" id=":R2ecpal9lab:">Ask Copilot about this file</span><div class="react-blob-header-edit-and-raw-actions BlobViewHeader-module__Box_4--vFP89"><div class="prc-ButtonGroup-ButtonGroup-vFUrY"><div><a href="https://github.com/iiml33/Install_xiaozhi-server/raw/refs/heads/main/install_whiptail.sh" data-testid="raw-button" class="prc-Button-ButtonBase-9n-Xk LinkButton-sc-1v6zkmg-0 iwmTUC BlobViewHeader-module__LinkButton--DMph4" data-loading="false" data-no-visuals="true" data-size="small" data-variant="default" aria-describedby=":R5becpal9lab:-loading-announcement"><span data-component="buttonContent" data-align="center" class="prc-Button-ButtonContent-Iohp5"><span data-component="text" class="prc-Button-Label-FWkx3">Raw</span></span></a></div><div><button data-component="IconButton" type="button" data-testid="copy-raw-button" class="prc-Button-ButtonBase-9n-Xk IconButton__StyledIconButton-sc-i53dt6-0 prc-Button-IconButton-fyge7" data-loading="false" data-no-visuals="true" data-size="small" data-variant="default" aria-describedby=":R6pbecpal9lab:-loading-announcement" aria-labelledby=":Rpbecpal9lab:"><svg aria-hidden="true" focusable="false" class="octicon octicon-copy" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" display="inline-block" overflow="visible" style="vertical-align:text-bottom"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Z"></path><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"></path></svg></button><span class="prc-TooltipV2-Tooltip-tLeuB" data-direction="n" aria-hidden="true" id=":Rpbecpal9lab:">Copy raw file</span></div><div><button data-component="IconButton" type="button" data-testid="download-raw-button" class="prc-Button-ButtonBase-9n-Xk IconButton__StyledIconButton-sc-i53dt6-0 gXjFlG prc-Button-IconButton-fyge7" data-loading="false" data-no-visuals="true" data-size="small" data-variant="default" aria-describedby=":R1tbecpal9lab:-loading-announcement" aria-labelledby=":Rdbecpal9lab:"><svg aria-hidden="true" focusable="false" class="octicon octicon-download" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" display="inline-block" overflow="visible" style="vertical-align:text-bottom"><path d="M2.75 14A1.75 1.75 0 0 1 1 12.25v-2.5a.75.75 0 0 1 1.5 0v2.5c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25v-2.5a.75.75 0 0 1 1.5 0v2.5A1.75 1.75 0 0 1 13.25 14Z"></path><path d="M7.25 7.689V2a.75.75 0 0 1 1.5 0v5.689l1.97-1.969a.749.749 0 1 1 1.06 1.06l-3.25 3.25a.749.749 0 0 1-1.06 0L4.22 6.78a.749.749 0 1 1 1.06-1.06l1.97 1.969Z"></path></svg></button><span class="prc-TooltipV2-Tooltip-tLeuB" data-direction="n" aria-hidden="true" id=":Rdbecpal9lab:">Download raw file</span></div></div><button hidden="" data-testid="raw-button-shortcut" data-hotkey-scope="read-only-cursor-text-area"></button><button hidden="" data-testid="copy-raw-button-shortcut" data-hotkey-scope="read-only-cursor-text-area"></button><button hidden="" data-testid="download-raw-button-shortcut" data-hotkey-scope="read-only-cursor-text-area"></button><a class="js-github-dev-shortcut d-none prc-Link-Link-9ZwDx" href="https://github.dev/"></a><button hidden="" data-testid="" data-hotkey-scope="read-only-cursor-text-area"></button><a class="js-github-dev-new-tab-shortcut d-none prc-Link-Link-9ZwDx" href="https://github.dev/" target="_blank"></a><button hidden="" data-testid="" data-hotkey-scope="read-only-cursor-text-area"></button><div class="prc-ButtonGroup-ButtonGroup-vFUrY"><div><a data-component="IconButton" type="button" data-testid="edit-button" class="prc-Button-ButtonBase-9n-Xk IconButton__StyledIconButton-sc-i53dt6-0 gRAczH prc-Button-IconButton-fyge7" data-loading="false" data-no-visuals="true" data-size="small" data-variant="default" aria-describedby=":R1mjecpal9lab:-loading-announcement" aria-labelledby=":R6jecpal9lab:" href="/iiml33/Install_xiaozhi-server/edit/main/install_whiptail.sh" data-discover="true"><svg aria-hidden="true" focusable="false" class="octicon octicon-pencil" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" display="inline-block" overflow="visible" style="vertical-align:text-bottom"><path d="M11.013 1.427a1.75 1.75 0 0 1 2.474 0l1.086 1.086a1.75 1.75 0 0 1 0 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 0 1-.927-.928l.929-3.25c.081-.286.235-.547.445-.758l8.61-8.61Zm.176 4.823L9.75 4.81l-6.286 6.287a.253.253 0 0 0-.064.108l-.558 1.953 1.953-.558a.253.253 0 0 0 .108-.064Zm1.238-3.763a.25.25 0 0 0-.354 0L10.811 3.75l1.439 1.44 1.263-1.263a.25.25 0 0 0 0-.354Z"></path></svg></a><span class="prc-TooltipV2-Tooltip-tLeuB" data-direction="nw" aria-hidden="true" id=":R6jecpal9lab:">Edit this file</span></div><div><button data-component="IconButton" type="button" data-testid="more-edit-button" aria-haspopup="true" aria-expanded="false" tabindex="0" class="prc-Button-ButtonBase-9n-Xk IconButton__StyledIconButton-sc-i53dt6-0 prc-Button-IconButton-fyge7" data-loading="false" data-no-visuals="true" data-size="small" data-variant="default" aria-describedby=":Rajecpal9lab:-loading-announcement" aria-labelledby=":R7qjecpal9lab:" id=":Rajecpal9lab:"><svg aria-hidden="true" focusable="false" class="octicon octicon-triangle-down" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" display="inline-block" overflow="visible" style="vertical-align:text-bottom"><path d="m4.427 7.427 3.396 3.396a.25.25 0 0 0 .354 0l3.396-3.396A.25.25 0 0 0 11.396 7H4.604a.25.25 0 0 0-.177.427Z"></path></svg></button><span class="prc-TooltipV2-Tooltip-tLeuB" data-direction="nw" aria-hidden="true" id=":R7qjecpal9lab:">More edit options</span></div></div><button hidden="" data-testid="" data-hotkey="e,Shift+E" data-hotkey-scope="read-only-cursor-text-area"></button></div><button data-component="IconButton" type="button" aria-pressed="true" aria-expanded="true" aria-controls="symbols-pane" data-testid="symbols-button" class="prc-Button-ButtonBase-9n-Xk IconButton__StyledIconButton-sc-i53dt6-0 BlobViewHeader-module__IconButton_2--KDy6i prc-Button-IconButton-fyge7" data-loading="false" data-no-visuals="true" data-size="small" data-variant="invisible" aria-describedby="symbols-button-loading-announcement" aria-labelledby=":R3ucpal9lab:" id="symbols-button"><svg aria-hidden="true" focusable="false" class="octicon octicon-code-square" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" display="inline-block" overflow="visible" style="vertical-align:text-bottom"><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v12.5A1.75 1.75 0 0 1 14.25 16H1.75A1.75 1.75 0 0 1 0 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25h12.5a.25.25 0 0 0 .25-.25V1.75a.25.25 0 0 0-.25-.25Zm7.47 3.97a.75.75 0 0 1 1.06 0l2 2a.75.75 0 0 1 0 1.06l-2 2a.749.749 0 0 1-1.275-.326.749.749 0 0 1 .215-.734L10.69 8 9.22 6.53a.75.75 0 0 1 0-1.06ZM6.78 6.53 5.31 8l1.47 1.47a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215l-2-2a.75.75 0 0 1 0-1.06l2-2a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042Z"></path></svg></button><span class="prc-TooltipV2-Tooltip-tLeuB" data-direction="nw" aria-hidden="true" id=":R3ucpal9lab:">Close symbols panel</span><div class="react-blob-header-edit-and-raw-actions-combined"><button data-component="IconButton" type="button" title="More file actions" data-testid="more-file-actions-button" aria-haspopup="true" aria-expanded="false" tabindex="0" class="prc-Button-ButtonBase-9n-Xk IconButton__StyledIconButton-sc-i53dt6-0 js-blob-dropdown-click BlobViewHeader-module__IconButton--uO1fA prc-Button-IconButton-fyge7" data-loading="false" data-no-visuals="true" data-size="small" data-variant="invisible" aria-describedby=":Rkucpal9lab:-loading-announcement" aria-labelledby=":Rfkucpal9lab:" id=":Rkucpal9lab:"><svg aria-hidden="true" focusable="false" class="octicon octicon-kebab-horizontal" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" display="inline-block" overflow="visible" style="vertical-align:text-bottom"><path d="M8 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM1.5 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Zm13 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z"></path></svg></button><span class="prc-TooltipV2-Tooltip-tLeuB" data-direction="nw" aria-hidden="true" id=":Rfkucpal9lab:">Edit and raw actions</span></div></div></div></div><div></div></div><div class="Box-sc-62in7e-0 doYuhf"><section aria-labelledby="file-name-id-wide file-name-id-mobile" class="Box-sc-62in7e-0 hhuNfn"><div class="Box-sc-62in7e-0 hNuvaP"><div id="highlighted-line-menu-positioner" class="position-relative"><div id="copilot-button-positioner" class="Box-sc-62in7e-0 kBkfpQ"><div class="Box-sc-62in7e-0 lnfLer"><div class="Box-sc-62in7e-0 djZnHX react-code-file-contents" role="presentation" aria-hidden="true" data-tab-size="4" data-paste-markdown-skip="true" data-hpc="true"><div class="react-line-numbers-no-virtualization" style="pointer-events:auto;position:relative;z-index:2"><div class="react-no-virtualization-wrapper-lines-ssr"><div data-line-number="1" class="react-line-number react-code-text" style="padding-right:16px">1</div><div data-line-number="2" class="react-line-number react-code-text" style="padding-right:16px">2</div><div data-line-number="3" class="react-line-number react-code-text" style="padding-right:16px">3</div><div data-line-number="4" class="react-line-number react-code-text" style="padding-right:16px">4<span class="Box-sc-62in7e-0 gTgIBo"><div aria-label="Collapse code section" role="button" class="Box-sc-62in7e-0 bzYYiL"><svg aria-hidden="true" focusable="false" class="octicon octicon-chevron-down" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" display="inline-block" overflow="visible" style="vertical-align:text-bottom"><path d="M12.78 5.22a.749.749 0 0 1 0 1.06l-4.25 4.25a.749.749 0 0 1-1.06 0L3.22 6.28a.749.749 0 1 1 1.06-1.06L8 8.939l3.72-3.719a.749.749 0 0 1 1.06 0Z"></path></svg></div></span></div><div data-line-number="5" class="child-of-line-3  react-line-number react-code-text" style="padding-right:16px">5</div><div data-line-number="6" class="child-of-line-3  react-line-number react-code-text" style="padding-right:16px">6</div><div data-line-number="7" class="child-of-line-3  react-line-number react-code-text" style="padding-right:16px">7</div><div data-line-number="8" class="child-of-line-3  react-line-number react-code-text" style="padding-right:16px">8</div><div data-line-number="9" class="child-of-line-3  react-line-number react-code-text" style="padding-right:16px">9</div><div data-line-number="10" class="child-of-line-3  react-line-number react-code-text" style="padding-right:16px">10</div><div data-line-number="11" class="react-line-number react-code-text" style="padding-right:16px">11</div><div data-line-number="12" class="react-line-number react-code-text" style="padding-right:16px">12</div><div data-line-number="13" class="react-line-number react-code-text" style="padding-right:16px">13</div><div data-line-number="14" class="react-line-number react-code-text" style="padding-right:16px">14</div><div data-line-number="15" class="react-line-number react-code-text" style="padding-right:16px">15</div><div data-line-number="16" class="react-line-number react-code-text" style="padding-right:16px">16</div><div data-line-number="17" class="react-line-number react-code-text" style="padding-right:16px">17</div><div data-line-number="18" class="react-line-number react-code-text" style="padding-right:16px">18</div><div data-line-number="19" class="react-line-number react-code-text" style="padding-right:16px">19</div><div data-line-number="20" class="react-line-number react-code-text" style="padding-right:16px">20</div><div data-line-number="21" class="react-line-number react-code-text" style="padding-right:16px">21</div><div data-line-number="22" class="react-line-number react-code-text" style="padding-right:16px">22</div><div data-line-number="23" class="react-line-number react-code-text" style="padding-right:16px">23</div><div data-line-number="24" class="react-line-number react-code-text" style="padding-right:16px">24</div><div data-line-number="25" class="react-line-number react-code-text" style="padding-right:16px">25</div><div data-line-number="26" class="react-line-number react-code-text" style="padding-right:16px">26</div><div data-line-number="27" class="react-line-number react-code-text" style="padding-right:16px">27</div><div data-line-number="28" class="react-line-number react-code-text" style="padding-right:16px">28</div><div data-line-number="29" class="react-line-number react-code-text" style="padding-right:16px">29</div><div data-line-number="30" class="react-line-number react-code-text" style="padding-right:16px">30</div><div data-line-number="31" class="react-line-number react-code-text" style="padding-right:16px">31</div><div data-line-number="32" class="react-line-number react-code-text" style="padding-right:16px">32</div><div data-line-number="33" class="react-line-number react-code-text" style="padding-right:16px">33</div><div data-line-number="34" class="react-line-number react-code-text" style="padding-right:16px">34</div><div data-line-number="35" class="react-line-number react-code-text" style="padding-right:16px">35</div><div data-line-number="36" class="react-line-number react-code-text" style="padding-right:16px">36</div><div data-line-number="37" class="react-line-number react-code-text" style="padding-right:16px">37</div><div data-line-number="38" class="react-line-number react-code-text" style="padding-right:16px">38</div><div data-line-number="39" class="react-line-number react-code-text" style="padding-right:16px">39<span class="Box-sc-62in7e-0 gTgIBo"><div aria-label="Collapse code section" role="button" class="Box-sc-62in7e-0 bzYYiL"><svg aria-hidden="true" focusable="false" class="octicon octicon-chevron-down" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" display="inline-block" overflow="visible" style="vertical-align:text-bottom"><path d="M12.78 5.22a.749.749 0 0 1 0 1.06l-4.25 4.25a.749.749 0 0 1-1.06 0L3.22 6.28a.749.749 0 1 1 1.06-1.06L8 8.939l3.72-3.719a.749.749 0 0 1 1.06 0Z"></path></svg></div></span></div><div data-line-number="40" class="child-of-line-38  react-line-number react-code-text" style="padding-right:16px">40</div><div data-line-number="41" class="child-of-line-38  react-line-number react-code-text" style="padding-right:16px">41</div><div data-line-number="42" class="child-of-line-38  react-line-number react-code-text" style="padding-right:16px">42</div><div data-line-number="43" class="child-of-line-38  react-line-number react-code-text" style="padding-right:16px">43</div><div data-line-number="44" class="child-of-line-38  react-line-number react-code-text" style="padding-right:16px">44</div><div data-line-number="45" class="react-line-number react-code-text" style="padding-right:16px">45</div><div data-line-number="46" class="react-line-number react-code-text" style="padding-right:16px">46</div><div data-line-number="47" class="react-line-number react-code-text" style="padding-right:16px">47</div><div data-line-number="48" class="react-line-number react-code-text" style="padding-right:16px">48</div><div data-line-number="49" class="react-line-number react-code-text" style="padding-right:16px">49</div><div data-line-number="50" class="react-line-number react-code-text" style="padding-right:16px">50</div><div data-line-number="51" class="react-line-number react-code-text" style="padding-right:16px">51</div><div data-line-number="52" class="react-line-number react-code-text" style="padding-right:16px">52</div><div data-line-number="53" class="react-line-number react-code-text" style="padding-right:16px">53</div><div data-line-number="54" class="react-line-number react-code-text" style="padding-right:16px">54</div><div data-line-number="55" class="react-line-number react-code-text" style="padding-right:16px">55</div><div data-line-number="56" class="react-line-number react-code-text" style="padding-right:16px">56</div><div data-line-number="57" class="react-line-number react-code-text" style="padding-right:16px">57</div><div data-line-number="58" class="react-line-number react-code-text" style="padding-right:16px">58</div><div data-line-number="59" class="react-line-number react-code-text" style="padding-right:16px">59</div><div data-line-number="60" class="react-line-number react-code-text" style="padding-right:16px">60</div></div><div class="react-no-virtualization-wrapper-lines-ssr"><div data-line-number="61" class="react-line-number react-code-text" style="padding-right:16px">61</div><div data-line-number="62" class="react-line-number react-code-text" style="padding-right:16px">62</div><div data-line-number="63" class="react-line-number react-code-text" style="padding-right:16px">63</div><div data-line-number="64" class="react-line-number react-code-text" style="padding-right:16px">64</div><div data-line-number="65" class="react-line-number react-code-text" style="padding-right:16px">65</div><div data-line-number="66" class="react-line-number react-code-text" style="padding-right:16px">66</div><div data-line-number="67" class="react-line-number react-code-text" style="padding-right:16px">67</div><div data-line-number="68" class="react-line-number react-code-text" style="padding-right:16px">68</div><div data-line-number="69" class="react-line-number react-code-text" style="padding-right:16px">69</div><div data-line-number="70" class="react-line-number react-code-text" style="padding-right:16px">70</div><div data-line-number="71" class="react-line-number react-code-text" style="padding-right:16px">71</div><div data-line-number="72" class="react-line-number react-code-text" style="padding-right:16px">72</div><div data-line-number="73" class="react-line-number react-code-text" style="padding-right:16px">73</div><div data-line-number="74" class="react-line-number react-code-text" style="padding-right:16px">74</div><div data-line-number="75" class="react-line-number react-code-text" style="padding-right:16px">75</div><div data-line-number="76" class="react-line-number react-code-text" style="padding-right:16px">76</div><div data-line-number="77" class="react-line-number react-code-text" style="padding-right:16px">77</div><div data-line-number="78" class="react-line-number react-code-text" style="padding-right:16px">78</div><div data-line-number="79" class="react-line-number react-code-text" style="padding-right:16px">79</div><div data-line-number="80" class="react-line-number react-code-text" style="padding-right:16px">80</div><div data-line-number="81" class="react-line-number react-code-text" style="padding-right:16px">81<span class="Box-sc-62in7e-0 gTgIBo"><div aria-label="Collapse code section" role="button" class="Box-sc-62in7e-0 bzYYiL"><svg aria-hidden="true" focusable="false" class="octicon octicon-chevron-down" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" display="inline-block" overflow="visible" style="vertical-align:text-bottom"><path d="M12.78 5.22a.749.749 0 0 1 0 1.06l-4.25 4.25a.749.749 0 0 1-1.06 0L3.22 6.28a.749.749 0 1 1 1.06-1.06L8 8.939l3.72-3.719a.749.749 0 0 1 1.06 0Z"></path></svg></div></span></div><div data-line-number="82" class="child-of-line-80  react-line-number react-code-text" style="padding-right:16px">82</div><div data-line-number="83" class="child-of-line-80  react-line-number react-code-text" style="padding-right:16px">83</div><div data-line-number="84" class="child-of-line-80  react-line-number react-code-text" style="padding-right:16px">84</div><div data-line-number="85" class="child-of-line-80  react-line-number react-code-text" style="padding-right:16px">85</div><div data-line-number="86" class="child-of-line-80  react-line-number react-code-text" style="padding-right:16px">86</div><div data-line-number="87" class="child-of-line-80  react-line-number react-code-text" style="padding-right:16px">87</div><div data-line-number="88" class="child-of-line-80  react-line-number react-code-text" style="padding-right:16px">88</div><div data-line-number="89" class="child-of-line-80  react-line-number react-code-text" style="padding-right:16px">89</div><div data-line-number="90" class="child-of-line-80  react-line-number react-code-text" style="padding-right:16px">90</div><div data-line-number="91" class="child-of-line-80  react-line-number react-code-text" style="padding-right:16px">91</div><div data-line-number="92" class="react-line-number react-code-text" style="padding-right:16px">92</div><div data-line-number="93" class="react-line-number react-code-text" style="padding-right:16px">93</div><div data-line-number="94" class="react-line-number react-code-text" style="padding-right:16px">94</div><div data-line-number="95" class="react-line-number react-code-text" style="padding-right:16px">95<span class="Box-sc-62in7e-0 gTgIBo"><div aria-label="Collapse code section" role="button" class="Box-sc-62in7e-0 bzYYiL"><svg aria-hidden="true" focusable="false" class="octicon octicon-chevron-down" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" display="inline-block" overflow="visible" style="vertical-align:text-bottom"><path d="M12.78 5.22a.749.749 0 0 1 0 1.06l-4.25 4.25a.749.749 0 0 1-1.06 0L3.22 6.28a.749.749 0 1 1 1.06-1.06L8 8.939l3.72-3.719a.749.749 0 0 1 1.06 0Z"></path></svg></div></span></div><div data-line-number="96" class="child-of-line-94  react-line-number react-code-text" style="padding-right:16px">96</div><div data-line-number="97" class="child-of-line-94  react-line-number react-code-text" style="padding-right:16px">97</div><div data-line-number="98" class="child-of-line-94  react-line-number react-code-text" style="padding-right:16px">98</div><div data-line-number="99" class="child-of-line-94  react-line-number react-code-text" style="padding-right:16px">99</div><div data-line-number="100" class="child-of-line-94  react-line-number react-code-text" style="padding-right:16px">100</div><div data-line-number="101" class="child-of-line-94  react-line-number react-code-text" style="padding-right:16px">101</div><div data-line-number="102" class="child-of-line-94  react-line-number react-code-text" style="padding-right:16px">102</div><div data-line-number="103" class="child-of-line-94  react-line-number react-code-text" style="padding-right:16px">103</div><div data-line-number="104" class="child-of-line-94  react-line-number react-code-text" style="padding-right:16px">104</div><div data-line-number="105" class="child-of-line-94  react-line-number react-code-text" style="padding-right:16px">105</div><div data-line-number="106" class="child-of-line-94  react-line-number react-code-text" style="padding-right:16px">106</div><div data-line-number="107" class="child-of-line-94  react-line-number react-code-text" style="padding-right:16px">107</div><div data-line-number="108" class="child-of-line-94  react-line-number react-code-text" style="padding-right:16px">108</div><div data-line-number="109" class="child-of-line-94  react-line-number react-code-text" style="padding-right:16px">109</div><div data-line-number="110" class="child-of-line-94  react-line-number react-code-text" style="padding-right:16px">110</div><div data-line-number="111" class="child-of-line-94  react-line-number react-code-text" style="padding-right:16px">111</div><div data-line-number="112" class="child-of-line-94  react-line-number react-code-text" style="padding-right:16px">112</div><div data-line-number="113" class="child-of-line-94  react-line-number react-code-text" style="padding-right:16px">113</div><div data-line-number="114" class="child-of-line-94  react-line-number react-code-text" style="padding-right:16px">114</div><div data-line-number="115" class="react-line-number react-code-text" style="padding-right:16px">115</div><div data-line-number="116" class="react-line-number react-code-text" style="padding-right:16px">116</div><div data-line-number="117" class="react-line-number react-code-text" style="padding-right:16px">117</div><div data-line-number="118" class="react-line-number react-code-text" style="padding-right:16px">118<span class="Box-sc-62in7e-0 gTgIBo"><div aria-label="Collapse code section" role="button" class="Box-sc-62in7e-0 bzYYiL"><svg aria-hidden="true" focusable="false" class="octicon octicon-chevron-down" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" display="inline-block" overflow="visible" style="vertical-align:text-bottom"><path d="M12.78 5.22a.749.749 0 0 1 0 1.06l-4.25 4.25a.749.749 0 0 1-1.06 0L3.22 6.28a.749.749 0 1 1 1.06-1.06L8 8.939l3.72-3.719a.749.749 0 0 1 1.06 0Z"></path></svg></div></span></div><div data-line-number="119" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">119</div><div data-line-number="120" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">120</div></div><div class="react-no-virtualization-wrapper-lines-ssr"><div data-line-number="121" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">121</div><div data-line-number="122" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">122</div><div data-line-number="123" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">123</div><div data-line-number="124" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">124</div><div data-line-number="125" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">125</div><div data-line-number="126" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">126</div><div data-line-number="127" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">127</div><div data-line-number="128" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">128</div><div data-line-number="129" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">129</div><div data-line-number="130" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">130</div><div data-line-number="131" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">131</div><div data-line-number="132" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">132</div><div data-line-number="133" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">133</div><div data-line-number="134" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">134</div><div data-line-number="135" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">135</div><div data-line-number="136" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">136</div><div data-line-number="137" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">137</div><div data-line-number="138" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">138</div><div data-line-number="139" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">139</div><div data-line-number="140" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">140</div><div data-line-number="141" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">141</div><div data-line-number="142" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">142</div><div data-line-number="143" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">143</div><div data-line-number="144" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">144</div><div data-line-number="145" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">145</div><div data-line-number="146" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">146</div><div data-line-number="147" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">147</div><div data-line-number="148" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">148</div><div data-line-number="149" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">149</div><div data-line-number="150" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">150</div><div data-line-number="151" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">151</div><div data-line-number="152" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">152</div><div data-line-number="153" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">153</div><div data-line-number="154" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">154</div><div data-line-number="155" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">155</div><div data-line-number="156" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">156</div><div data-line-number="157" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">157</div><div data-line-number="158" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">158</div><div data-line-number="159" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">159</div><div data-line-number="160" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">160</div><div data-line-number="161" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">161</div><div data-line-number="162" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">162</div><div data-line-number="163" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">163</div><div data-line-number="164" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">164</div><div data-line-number="165" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">165</div><div data-line-number="166" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">166</div><div data-line-number="167" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">167</div><div data-line-number="168" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">168</div><div data-line-number="169" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">169</div><div data-line-number="170" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">170</div><div data-line-number="171" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">171</div><div data-line-number="172" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">172</div><div data-line-number="173" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">173</div><div data-line-number="174" class="child-of-line-117  react-line-number react-code-text" style="padding-right:16px">174</div><div data-line-number="175" class="react-line-number react-code-text" style="padding-right:16px">175</div><div data-line-number="176" class="react-line-number react-code-text" style="padding-right:16px">176</div><div data-line-number="177" class="react-line-number react-code-text" style="padding-right:16px">177</div><div data-line-number="178" class="react-line-number react-code-text" style="padding-right:16px">178<span class="Box-sc-62in7e-0 gTgIBo"><div aria-label="Collapse code section" role="button" class="Box-sc-62in7e-0 bzYYiL"><svg aria-hidden="true" focusable="false" class="octicon octicon-chevron-down" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" display="inline-block" overflow="visible" style="vertical-align:text-bottom"><path d="M12.78 5.22a.749.749 0 0 1 0 1.06l-4.25 4.25a.749.749 0 0 1-1.06 0L3.22 6.28a.749.749 0 1 1 1.06-1.06L8 8.939l3.72-3.719a.749.749 0 0 1 1.06 0Z"></path></svg></div></span></div><div data-line-number="179" class="child-of-line-177  react-line-number react-code-text" style="padding-right:16px">179</div><div data-line-number="180" class="child-of-line-177  react-line-number react-code-text" style="padding-right:16px">180</div></div><div class="react-no-virtualization-wrapper-lines-ssr"><div data-line-number="181" class="child-of-line-177  react-line-number react-code-text" style="padding-right:16px">181</div><div data-line-number="182" class="child-of-line-177  react-line-number react-code-text" style="padding-right:16px">182</div><div data-line-number="183" class="child-of-line-177  react-line-number react-code-text" style="padding-right:16px">183</div><div data-line-number="184" class="child-of-line-177  react-line-number react-code-text" style="padding-right:16px">184</div><div data-line-number="185" class="child-of-line-177  react-line-number react-code-text" style="padding-right:16px">185</div><div data-line-number="186" class="child-of-line-177  react-line-number react-code-text" style="padding-right:16px">186</div><div data-line-number="187" class="child-of-line-177  react-line-number react-code-text" style="padding-right:16px">187</div><div data-line-number="188" class="child-of-line-177  react-line-number react-code-text" style="padding-right:16px">188</div><div data-line-number="189" class="child-of-line-177  react-line-number react-code-text" style="padding-right:16px">189</div><div data-line-number="190" class="child-of-line-177  react-line-number react-code-text" style="padding-right:16px">190</div><div data-line-number="191" class="child-of-line-177  react-line-number react-code-text" style="padding-right:16px">191</div><div data-line-number="192" class="child-of-line-177  react-line-number react-code-text" style="padding-right:16px">192</div><div data-line-number="193" class="child-of-line-177  react-line-number react-code-text" style="padding-right:16px">193</div><div data-line-number="194" class="child-of-line-177  react-line-number react-code-text" style="padding-right:16px">194</div><div data-line-number="195" class="child-of-line-177  react-line-number react-code-text" style="padding-right:16px">195</div><div data-line-number="196" class="child-of-line-177  react-line-number react-code-text" style="padding-right:16px">196</div><div data-line-number="197" class="child-of-line-177  react-line-number react-code-text" style="padding-right:16px">197</div><div data-line-number="198" class="child-of-line-177  react-line-number react-code-text" style="padding-right:16px">198</div><div data-line-number="199" class="react-line-number react-code-text" style="padding-right:16px">199</div><div data-line-number="200" class="react-line-number react-code-text" style="padding-right:16px">200</div><div data-line-number="201" class="react-line-number react-code-text" style="padding-right:16px">201</div><div data-line-number="202" class="react-line-number react-code-text" style="padding-right:16px">202</div><div data-line-number="203" class="react-line-number react-code-text" style="padding-right:16px">203</div><div data-line-number="204" class="react-line-number react-code-text" style="padding-right:16px">204</div><div data-line-number="205" class="react-line-number react-code-text" style="padding-right:16px">205</div><div data-line-number="206" class="react-line-number react-code-text" style="padding-right:16px">206</div><div data-line-number="207" class="react-line-number react-code-text" style="padding-right:16px">207</div><div data-line-number="208" class="react-line-number react-code-text" style="padding-right:16px">208</div><div data-line-number="209" class="react-line-number react-code-text" style="padding-right:16px">209</div><div data-line-number="210" class="react-line-number react-code-text" style="padding-right:16px">210</div><div data-line-number="211" class="react-line-number react-code-text" style="padding-right:16px">211</div><div data-line-number="212" class="react-line-number react-code-text" style="padding-right:16px">212</div><div data-line-number="213" class="react-line-number react-code-text" style="padding-right:16px">213</div><div data-line-number="214" class="react-line-number react-code-text" style="padding-right:16px">214</div><div data-line-number="215" class="react-line-number react-code-text" style="padding-right:16px">215</div><div data-line-number="216" class="react-line-number react-code-text" style="padding-right:16px">216</div><div data-line-number="217" class="react-line-number react-code-text" style="padding-right:16px">217</div><div data-line-number="218" class="react-line-number react-code-text" style="padding-right:16px">218</div><div data-line-number="219" class="react-line-number react-code-text" style="padding-right:16px">219</div><div data-line-number="220" class="react-line-number react-code-text" style="padding-right:16px">220</div><div data-line-number="221" class="react-line-number react-code-text" style="padding-right:16px">221</div><div data-line-number="222" class="react-line-number react-code-text" style="padding-right:16px">222</div><div data-line-number="223" class="react-line-number react-code-text" style="padding-right:16px">223</div><div data-line-number="224" class="react-line-number react-code-text" style="padding-right:16px">224</div><div data-line-number="225" class="react-line-number react-code-text" style="padding-right:16px">225</div><div data-line-number="226" class="react-line-number react-code-text" style="padding-right:16px">226</div><div data-line-number="227" class="react-line-number react-code-text" style="padding-right:16px">227</div><div data-line-number="228" class="react-line-number react-code-text" style="padding-right:16px">228</div><div data-line-number="229" class="react-line-number react-code-text" style="padding-right:16px">229</div><div data-line-number="230" class="react-line-number react-code-text" style="padding-right:16px">230</div><div data-line-number="231" class="react-line-number react-code-text" style="padding-right:16px">231</div><div data-line-number="232" class="react-line-number react-code-text" style="padding-right:16px">232</div><div data-line-number="233" class="react-line-number react-code-text" style="padding-right:16px">233</div><div data-line-number="234" class="react-line-number react-code-text" style="padding-right:16px">234</div><div data-line-number="235" class="react-line-number react-code-text" style="padding-right:16px">235</div><div data-line-number="236" class="react-line-number react-code-text" style="padding-right:16px">236</div><div data-line-number="237" class="react-line-number react-code-text" style="padding-right:16px">237</div><div data-line-number="238" class="react-line-number react-code-text" style="padding-right:16px">238</div><div data-line-number="239" class="react-line-number react-code-text" style="padding-right:16px">239</div><div data-line-number="240" class="react-line-number react-code-text" style="padding-right:16px">240</div></div><div class="react-no-virtualization-wrapper-lines-ssr"><div data-line-number="241" class="react-line-number react-code-text" style="padding-right:16px">241</div><div data-line-number="242" class="react-line-number react-code-text" style="padding-right:16px">242</div><div data-line-number="243" class="react-line-number react-code-text" style="padding-right:16px">243</div><div data-line-number="244" class="react-line-number react-code-text" style="padding-right:16px">244</div><div data-line-number="245" class="react-line-number react-code-text" style="padding-right:16px">245</div><div data-line-number="246" class="react-line-number react-code-text" style="padding-right:16px">246</div><div data-line-number="247" class="react-line-number react-code-text" style="padding-right:16px">247</div><div data-line-number="248" class="react-line-number react-code-text" style="padding-right:16px">248</div><div data-line-number="249" class="react-line-number react-code-text" style="padding-right:16px">249</div><div data-line-number="250" class="react-line-number react-code-text" style="padding-right:16px">250</div><div data-line-number="251" class="react-line-number react-code-text" style="padding-right:16px">251</div><div data-line-number="252" class="react-line-number react-code-text" style="padding-right:16px">252</div><div data-line-number="253" class="react-line-number react-code-text" style="padding-right:16px">253</div><div data-line-number="254" class="react-line-number react-code-text" style="padding-right:16px">254</div><div data-line-number="255" class="react-line-number react-code-text" style="padding-right:16px">255</div><div data-line-number="256" class="react-line-number react-code-text" style="padding-right:16px">256</div><div data-line-number="257" class="react-line-number react-code-text" style="padding-right:16px">257</div><div data-line-number="258" class="react-line-number react-code-text" style="padding-right:16px">258</div><div data-line-number="259" class="react-line-number react-code-text" style="padding-right:16px">259</div><div data-line-number="260" class="react-line-number react-code-text" style="padding-right:16px">260</div><div data-line-number="261" class="react-line-number react-code-text" style="padding-right:16px">261</div><div data-line-number="262" class="react-line-number react-code-text" style="padding-right:16px">262</div><div data-line-number="263" class="react-line-number react-code-text" style="padding-right:16px">263</div><div data-line-number="264" class="react-line-number react-code-text" style="padding-right:16px">264</div><div data-line-number="265" class="react-line-number react-code-text" style="padding-right:16px">265</div><div data-line-number="266" class="react-line-number react-code-text" style="padding-right:16px">266</div><div data-line-number="267" class="react-line-number react-code-text" style="padding-right:16px">267</div><div data-line-number="268" class="react-line-number react-code-text" style="padding-right:16px">268</div><div data-line-number="269" class="react-line-number react-code-text" style="padding-right:16px">269</div><div data-line-number="270" class="react-line-number react-code-text" style="padding-right:16px">270</div><div data-line-number="271" class="react-line-number react-code-text" style="padding-right:16px">271</div><div data-line-number="272" class="react-line-number react-code-text" style="padding-right:16px">272</div><div data-line-number="273" class="react-line-number react-code-text" style="padding-right:16px">273</div><div data-line-number="274" class="react-line-number react-code-text" style="padding-right:16px">274</div><div data-line-number="275" class="react-line-number react-code-text" style="padding-right:16px">275</div><div data-line-number="276" class="react-line-number react-code-text" style="padding-right:16px">276</div><div data-line-number="277" class="react-line-number react-code-text" style="padding-right:16px">277</div><div data-line-number="278" class="react-line-number react-code-text" style="padding-right:16px">278</div><div data-line-number="279" class="react-line-number react-code-text" style="padding-right:16px">279</div><div data-line-number="280" class="react-line-number react-code-text" style="padding-right:16px">280</div><div data-line-number="281" class="react-line-number react-code-text" style="padding-right:16px">281</div><div data-line-number="282" class="react-line-number react-code-text" style="padding-right:16px">282</div><div data-line-number="283" class="react-line-number react-code-text" style="padding-right:16px">283</div><div data-line-number="284" class="react-line-number react-code-text" style="padding-right:16px">284</div><div data-line-number="285" class="react-line-number react-code-text" style="padding-right:16px">285</div><div data-line-number="286" class="react-line-number react-code-text" style="padding-right:16px">286</div><div data-line-number="287" class="react-line-number react-code-text" style="padding-right:16px">287</div><div data-line-number="288" class="react-line-number react-code-text" style="padding-right:16px">288</div><div data-line-number="289" class="react-line-number react-code-text" style="padding-right:16px">289</div><div data-line-number="290" class="react-line-number react-code-text" style="padding-right:16px">290</div><div data-line-number="291" class="react-line-number react-code-text" style="padding-right:16px">291</div><div data-line-number="292" class="react-line-number react-code-text" style="padding-right:16px">292</div><div data-line-number="293" class="react-line-number react-code-text" style="padding-right:16px">293</div><div data-line-number="294" class="react-line-number react-code-text" style="padding-right:16px">294</div><div data-line-number="295" class="react-line-number react-code-text" style="padding-right:16px">295</div><div data-line-number="296" class="react-line-number react-code-text" style="padding-right:16px">296</div><div data-line-number="297" class="react-line-number react-code-text" style="padding-right:16px">297</div><div data-line-number="298" class="react-line-number react-code-text" style="padding-right:16px">298</div><div data-line-number="299" class="react-line-number react-code-text" style="padding-right:16px">299</div><div data-line-number="300" class="react-line-number react-code-text" style="padding-right:16px">300</div></div><div class="react-no-virtualization-wrapper-lines-ssr"><div data-line-number="301" class="react-line-number react-code-text" style="padding-right:16px">301</div><div data-line-number="302" class="react-line-number react-code-text" style="padding-right:16px">302</div><div data-line-number="303" class="react-line-number react-code-text" style="padding-right:16px">303</div><div data-line-number="304" class="react-line-number react-code-text" style="padding-right:16px">304</div><div data-line-number="305" class="react-line-number react-code-text" style="padding-right:16px">305</div><div data-line-number="306" class="react-line-number react-code-text" style="padding-right:16px">306</div><div data-line-number="307" class="react-line-number react-code-text" style="padding-right:16px">307</div><div data-line-number="308" class="react-line-number react-code-text" style="padding-right:16px">308</div><div data-line-number="309" class="react-line-number react-code-text" style="padding-right:16px">309</div><div data-line-number="310" class="react-line-number react-code-text" style="padding-right:16px">310</div><div data-line-number="311" class="react-line-number react-code-text" style="padding-right:16px">311</div><div data-line-number="312" class="react-line-number react-code-text" style="padding-right:16px">312</div><div data-line-number="313" class="react-line-number react-code-text" style="padding-right:16px">313</div><div data-line-number="314" class="react-line-number react-code-text" style="padding-right:16px">314</div><div data-line-number="315" class="react-line-number react-code-text" style="padding-right:16px">315</div><div data-line-number="316" class="react-line-number react-code-text" style="padding-right:16px">316</div><div data-line-number="317" class="react-line-number react-code-text" style="padding-right:16px">317</div><div data-line-number="318" class="react-line-number react-code-text" style="padding-right:16px">318</div><div data-line-number="319" class="react-line-number react-code-text" style="padding-right:16px">319</div><div data-line-number="320" class="react-line-number react-code-text" style="padding-right:16px">320</div><div data-line-number="321" class="react-line-number react-code-text" style="padding-right:16px">321</div><div data-line-number="322" class="react-line-number react-code-text" style="padding-right:16px">322</div><div data-line-number="323" class="react-line-number react-code-text" style="padding-right:16px">323</div><div data-line-number="324" class="react-line-number react-code-text" style="padding-right:16px">324</div><div data-line-number="325" class="react-line-number react-code-text" style="padding-right:16px">325</div><div data-line-number="326" class="react-line-number react-code-text" style="padding-right:16px">326</div><div data-line-number="327" class="react-line-number react-code-text" style="padding-right:16px">327</div><div data-line-number="328" class="react-line-number react-code-text" style="padding-right:16px">328</div><div data-line-number="329" class="react-line-number react-code-text" style="padding-right:16px">329</div><div data-line-number="330" class="react-line-number react-code-text" style="padding-right:16px">330</div><div data-line-number="331" class="react-line-number react-code-text" style="padding-right:16px">331</div><div data-line-number="332" class="react-line-number react-code-text" style="padding-right:16px">332</div><div data-line-number="333" class="react-line-number react-code-text" style="padding-right:16px">333</div><div data-line-number="334" class="react-line-number react-code-text" style="padding-right:16px">334</div><div data-line-number="335" class="react-line-number react-code-text" style="padding-right:16px">335</div><div data-line-number="336" class="react-line-number react-code-text" style="padding-right:16px">336</div><div data-line-number="337" class="react-line-number react-code-text" style="padding-right:16px">337</div><div data-line-number="338" class="react-line-number react-code-text" style="padding-right:16px">338</div><div data-line-number="339" class="react-line-number react-code-text" style="padding-right:16px">339</div><div data-line-number="340" class="react-line-number react-code-text" style="padding-right:16px">340</div><div data-line-number="341" class="react-line-number react-code-text" style="padding-right:16px">341</div><div data-line-number="342" class="react-line-number react-code-text" style="padding-right:16px">342</div><div data-line-number="343" class="react-line-number react-code-text" style="padding-right:16px">343</div><div data-line-number="344" class="react-line-number react-code-text" style="padding-right:16px">344</div><div data-line-number="345" class="react-line-number react-code-text" style="padding-right:16px">345</div><div data-line-number="346" class="react-line-number react-code-text" style="padding-right:16px">346</div><div data-line-number="347" class="react-line-number react-code-text" style="padding-right:16px">347</div><div data-line-number="348" class="react-line-number react-code-text" style="padding-right:16px">348</div><div data-line-number="349" class="react-line-number react-code-text" style="padding-right:16px">349</div><div data-line-number="350" class="react-line-number react-code-text" style="padding-right:16px">350</div><div data-line-number="351" class="react-line-number react-code-text" style="padding-right:16px">351</div><div data-line-number="352" class="react-line-number react-code-text" style="padding-right:16px">352</div><div data-line-number="353" class="react-line-number react-code-text" style="padding-right:16px">353</div><div data-line-number="354" class="react-line-number react-code-text" style="padding-right:16px">354</div><div data-line-number="355" class="react-line-number react-code-text" style="padding-right:16px">355</div><div data-line-number="356" class="react-line-number react-code-text" style="padding-right:16px">356</div><div data-line-number="357" class="react-line-number react-code-text" style="padding-right:16px">357</div><div data-line-number="358" class="react-line-number react-code-text" style="padding-right:16px">358</div><div data-line-number="359" class="react-line-number react-code-text" style="padding-right:16px">359</div><div data-line-number="360" class="react-line-number react-code-text" style="padding-right:16px">360</div></div><div class="react-no-virtualization-wrapper-lines-ssr"><div data-line-number="361" class="react-line-number react-code-text" style="padding-right:16px">361</div><div data-line-number="362" class="react-line-number react-code-text" style="padding-right:16px">362</div><div data-line-number="363" class="react-line-number react-code-text" style="padding-right:16px">363</div><div data-line-number="364" class="react-line-number react-code-text" style="padding-right:16px">364</div><div data-line-number="365" class="react-line-number react-code-text" style="padding-right:16px">365</div><div data-line-number="366" class="react-line-number react-code-text" style="padding-right:16px">366</div><div data-line-number="367" class="react-line-number react-code-text" style="padding-right:16px">367</div><div data-line-number="368" class="react-line-number react-code-text" style="padding-right:16px">368</div><div data-line-number="369" class="react-line-number react-code-text" style="padding-right:16px">369</div><div data-line-number="370" class="react-line-number react-code-text" style="padding-right:16px">370</div><div data-line-number="371" class="react-line-number react-code-text" style="padding-right:16px">371</div><div data-line-number="372" class="react-line-number react-code-text" style="padding-right:16px">372</div><div data-line-number="373" class="react-line-number react-code-text" style="padding-right:16px">373</div><div data-line-number="374" class="react-line-number react-code-text" style="padding-right:16px">374</div><div data-line-number="375" class="react-line-number react-code-text" style="padding-right:16px">375</div><div data-line-number="376" class="react-line-number react-code-text" style="padding-right:16px">376</div><div data-line-number="377" class="react-line-number react-code-text" style="padding-right:16px">377</div><div data-line-number="378" class="react-line-number react-code-text" style="padding-right:16px">378</div><div data-line-number="379" class="react-line-number react-code-text" style="padding-right:16px">379</div><div data-line-number="380" class="react-line-number react-code-text" style="padding-right:16px">380</div><div data-line-number="381" class="react-line-number react-code-text" style="padding-right:16px">381</div><div data-line-number="382" class="react-line-number react-code-text" style="padding-right:16px">382</div><div data-line-number="383" class="react-line-number react-code-text" style="padding-right:16px">383</div><div data-line-number="384" class="react-line-number react-code-text" style="padding-right:16px">384</div><div data-line-number="385" class="react-line-number react-code-text" style="padding-right:16px">385</div><div data-line-number="386" class="react-line-number react-code-text" style="padding-right:16px">386</div><div data-line-number="387" class="react-line-number react-code-text" style="padding-right:16px">387</div><div data-line-number="388" class="react-line-number react-code-text" style="padding-right:16px">388</div><div data-line-number="389" class="react-line-number react-code-text" style="padding-right:16px">389</div><div data-line-number="390" class="react-line-number react-code-text" style="padding-right:16px">390</div><div data-line-number="391" class="react-line-number react-code-text" style="padding-right:16px">391</div><div data-line-number="392" class="react-line-number react-code-text" style="padding-right:16px">392</div><div data-line-number="393" class="react-line-number react-code-text" style="padding-right:16px">393</div><div data-line-number="394" class="react-line-number react-code-text" style="padding-right:16px">394</div><div data-line-number="395" class="react-line-number react-code-text" style="padding-right:16px">395</div><div data-line-number="396" class="react-line-number react-code-text" style="padding-right:16px">396</div><div data-line-number="397" class="react-line-number react-code-text" style="padding-right:16px">397</div><div data-line-number="398" class="react-line-number react-code-text" style="padding-right:16px">398</div><div data-line-number="399" class="react-line-number react-code-text" style="padding-right:16px">399</div><div data-line-number="400" class="react-line-number react-code-text" style="padding-right:16px">400</div><div data-line-number="401" class="react-line-number react-code-text" style="padding-right:16px">401</div><div data-line-number="402" class="react-line-number react-code-text" style="padding-right:16px">402</div><div data-line-number="403" class="react-line-number react-code-text" style="padding-right:16px">403</div><div data-line-number="404" class="react-line-number react-code-text" style="padding-right:16px">404</div><div data-line-number="405" class="react-line-number react-code-text" style="padding-right:16px">405</div><div data-line-number="406" class="react-line-number react-code-text" style="padding-right:16px">406</div><div data-line-number="407" class="react-line-number react-code-text" style="padding-right:16px">407</div><div data-line-number="408" class="react-line-number react-code-text" style="padding-right:16px">408</div><div data-line-number="409" class="react-line-number react-code-text" style="padding-right:16px">409</div><div data-line-number="410" class="react-line-number react-code-text" style="padding-right:16px">410</div><div data-line-number="411" class="react-line-number react-code-text" style="padding-right:16px">411</div><div data-line-number="412" class="react-line-number react-code-text" style="padding-right:16px">412</div><div data-line-number="413" class="react-line-number react-code-text" style="padding-right:16px">413</div><div data-line-number="414" class="react-line-number react-code-text" style="padding-right:16px">414</div><div data-line-number="415" class="react-line-number react-code-text" style="padding-right:16px">415</div><div data-line-number="416" class="react-line-number react-code-text" style="padding-right:16px">416</div><div data-line-number="417" class="react-line-number react-code-text" style="padding-right:16px">417</div><div data-line-number="418" class="react-line-number react-code-text" style="padding-right:16px">418</div><div data-line-number="419" class="react-line-number react-code-text" style="padding-right:16px">419</div><div data-line-number="420" class="react-line-number react-code-text" style="padding-right:16px">420</div></div><div class="react-no-virtualization-wrapper-lines-ssr"><div data-line-number="421" class="react-line-number react-code-text" style="padding-right:16px">421</div><div data-line-number="422" class="react-line-number react-code-text" style="padding-right:16px">422</div><div data-line-number="423" class="react-line-number react-code-text" style="padding-right:16px">423</div><div data-line-number="424" class="react-line-number react-code-text" style="padding-right:16px">424</div><div data-line-number="425" class="react-line-number react-code-text" style="padding-right:16px">425</div><div data-line-number="426" class="react-line-number react-code-text" style="padding-right:16px">426</div><div data-line-number="427" class="react-line-number react-code-text" style="padding-right:16px">427</div><div data-line-number="428" class="react-line-number react-code-text" style="padding-right:16px">428</div><div data-line-number="429" class="react-line-number react-code-text" style="padding-right:16px">429</div><div data-line-number="430" class="react-line-number react-code-text" style="padding-right:16px">430</div><div data-line-number="431" class="react-line-number react-code-text" style="padding-right:16px">431</div><div data-line-number="432" class="react-line-number react-code-text" style="padding-right:16px">432</div><div data-line-number="433" class="react-line-number react-code-text" style="padding-right:16px">433</div><div data-line-number="434" class="react-line-number react-code-text" style="padding-right:16px">434</div><div data-line-number="435" class="react-line-number react-code-text" style="padding-right:16px">435</div><div data-line-number="436" class="react-line-number react-code-text" style="padding-right:16px">436</div><div data-line-number="437" class="react-line-number react-code-text" style="padding-right:16px">437</div><div data-line-number="438" class="react-line-number react-code-text" style="padding-right:16px">438</div><div data-line-number="439" class="react-line-number react-code-text" style="padding-right:16px">439</div><div data-line-number="440" class="react-line-number react-code-text" style="padding-right:16px">440</div><div data-line-number="441" class="react-line-number react-code-text" style="padding-right:16px">441</div><div data-line-number="442" class="react-line-number react-code-text" style="padding-right:16px">442</div><div data-line-number="443" class="react-line-number react-code-text" style="padding-right:16px">443</div><div data-line-number="444" class="react-line-number react-code-text" style="padding-right:16px">444</div><div data-line-number="445" class="react-line-number react-code-text" style="padding-right:16px">445</div><div data-line-number="446" class="react-line-number react-code-text" style="padding-right:16px">446</div><div data-line-number="447" class="react-line-number react-code-text" style="padding-right:16px">447</div><div data-line-number="448" class="react-line-number react-code-text" style="padding-right:16px">448</div><div data-line-number="449" class="react-line-number react-code-text" style="padding-right:16px">449</div><div data-line-number="450" class="react-line-number react-code-text" style="padding-right:16px">450</div><div data-line-number="451" class="react-line-number react-code-text" style="padding-right:16px">451</div><div data-line-number="452" class="react-line-number react-code-text" style="padding-right:16px">452</div><div data-line-number="453" class="react-line-number react-code-text" style="padding-right:16px">453</div><div data-line-number="454" class="react-line-number react-code-text" style="padding-right:16px">454</div><div data-line-number="455" class="react-line-number react-code-text" style="padding-right:16px">455</div><div data-line-number="456" class="react-line-number react-code-text" style="padding-right:16px">456</div><div data-line-number="457" class="react-line-number react-code-text" style="padding-right:16px">457</div><div data-line-number="458" class="react-line-number react-code-text" style="padding-right:16px">458</div><div data-line-number="459" class="react-line-number react-code-text" style="padding-right:16px">459</div><div data-line-number="460" class="react-line-number react-code-text" style="padding-right:16px">460</div><div data-line-number="461" class="react-line-number react-code-text" style="padding-right:16px">461</div><div data-line-number="462" class="react-line-number react-code-text" style="padding-right:16px">462</div><div data-line-number="463" class="react-line-number react-code-text" style="padding-right:16px">463</div><div data-line-number="464" class="react-line-number react-code-text" style="padding-right:16px">464</div><div data-line-number="465" class="react-line-number react-code-text" style="padding-right:16px">465</div><div data-line-number="466" class="react-line-number react-code-text" style="padding-right:16px">466</div><div data-line-number="467" class="react-line-number react-code-text" style="padding-right:16px">467</div><div data-line-number="468" class="react-line-number react-code-text" style="padding-right:16px">468</div><div data-line-number="469" class="react-line-number react-code-text" style="padding-right:16px">469</div><div data-line-number="470" class="react-line-number react-code-text" style="padding-right:16px">470</div><div data-line-number="471" class="react-line-number react-code-text" style="padding-right:16px">471</div><div data-line-number="472" class="react-line-number react-code-text" style="padding-right:16px">472</div><div data-line-number="473" class="react-line-number react-code-text" style="padding-right:16px">473</div><div data-line-number="474" class="react-line-number react-code-text" style="padding-right:16px">474</div><div data-line-number="475" class="react-line-number react-code-text" style="padding-right:16px">475</div><div data-line-number="476" class="react-line-number react-code-text" style="padding-right:16px">476</div><div data-line-number="477" class="react-line-number react-code-text" style="padding-right:16px">477</div><div data-line-number="478" class="react-line-number react-code-text" style="padding-right:16px">478</div><div data-line-number="479" class="react-line-number react-code-text" style="padding-right:16px">479</div><div data-line-number="480" class="react-line-number react-code-text" style="padding-right:16px">480</div></div><div class="react-no-virtualization-wrapper-lines-ssr"><div data-line-number="481" class="react-line-number react-code-text" style="padding-right:16px">481</div><div data-line-number="482" class="react-line-number react-code-text" style="padding-right:16px">482</div><div data-line-number="483" class="react-line-number react-code-text" style="padding-right:16px">483</div><div data-line-number="484" class="react-line-number react-code-text" style="padding-right:16px">484</div><div data-line-number="485" class="react-line-number react-code-text" style="padding-right:16px">485</div><div data-line-number="486" class="react-line-number react-code-text" style="padding-right:16px">486</div><div data-line-number="487" class="react-line-number react-code-text" style="padding-right:16px">487</div><div data-line-number="488" class="react-line-number react-code-text" style="padding-right:16px">488</div><div data-line-number="489" class="react-line-number react-code-text" style="padding-right:16px">489</div><div data-line-number="490" class="react-line-number react-code-text" style="padding-right:16px">490</div><div data-line-number="491" class="react-line-number react-code-text" style="padding-right:16px">491</div></div></div><div class="react-code-lines"><div><div id="LC1" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c"><span class="pl-c">#!</span>/bin/bash</span></div>
+<div id="LC2" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">
+</div>
+<div id="LC3" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c"><span class="pl-c">#</span> 定义中断处理函数</span></div>
+<div id="LC4" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-en">handle_interrupt</span>() {</div>
+<div id="LC5" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-3 ">    <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span><span class="pl-pds">&quot;</span></span></div>
+<div id="LC6" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-3 ">    <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>安装已被用户中断(Ctrl+C或Esc)<span class="pl-pds">&quot;</span></span></div>
+<div id="LC7" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-3 ">    <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>如需重新安装，请再次运行脚本<span class="pl-pds">&quot;</span></span></div>
+<div id="LC8" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-3 ">    <span class="pl-c"><span class="pl-c">#</span> 杀死后台进程</span></div>
+<div id="LC9" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-3 ">    <span class="pl-c1">kill</span> <span class="pl-smi">$ESC_PID</span> <span class="pl-k">2&gt;</span>/dev/null</div>
+<div id="LC10" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-3 ">    <span class="pl-c1">exit</span> 1</div>
+<div id="LC11" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">}</div>
+<div id="LC12" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">
+</div>
+<div id="LC13" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c"><span class="pl-c">#</span> 设置信号捕获，处理Ctrl+C</span></div>
+<div id="LC14" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c1">trap</span> handle_interrupt SIGINT</div>
+<div id="LC15" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">
+</div>
+<div id="LC16" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c"><span class="pl-c">#</span> 处理Esc键</span></div>
+<div id="LC17" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c"><span class="pl-c">#</span> 保存终端设置</span></div>
+<div id="LC18" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">old_stty_settings=<span class="pl-s"><span class="pl-pds">$(</span>stty -g<span class="pl-pds">)</span></span></div>
+<div id="LC19" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c"><span class="pl-c">#</span> 设置终端立即响应，不回显</span></div>
+<div id="LC20" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">stty -icanon -echo min 1 <span class="pl-k">time</span> 0</div>
+<div id="LC21" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">
+</div>
+<div id="LC22" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">
+</div>
+<div id="LC23" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c"><span class="pl-c">#</span> 打印彩色字符画</span></div>
+<div id="LC24" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c1">echo</span> -e <span class="pl-s"><span class="pl-pds">&quot;</span>\e[1;32m<span class="pl-pds">&quot;</span></span>  <span class="pl-c"><span class="pl-c">#</span> 设置颜色为亮绿色</span></div>
+<div id="LC25" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">cat <span class="pl-s"><span class="pl-k">&lt;&lt;</span> &quot;<span class="pl-k">EOF</span>&quot;</span></div>
+<div id="LC26" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s">脚本作者：@Bilibili 香草味的纳西妲喵</span></div>
+<div id="LC27" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s"> __      __            _  _  _            _   _         _      _      _        </span></div>
+<div id="LC28" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s"> \ \    / /           (_)| || |          | \ | |       | |    (_)    | |       </span></div>
+<div id="LC29" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s">  \ \  / /__ _  _ __   _ | || |  __ _    |  \| |  __ _ | |__   _   __| |  __ _ </span></div>
+<div id="LC30" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s">   \ \/ // _` || &#39;_ \ | || || | / _` |   | . ` | / _` || &#39;_ \ | | / _` | / _` |</span></div>
+<div id="LC31" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s">    \  /| (_| || | | || || || || (_| |   | |\  || (_| || | | || || (_| || (_| |</span></div>
+<div id="LC32" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s">     \/  \__,_||_| |_||_||_||_| \__,_|   |_| \_| \__,_||_| |_||_| \__,_| \__,_|                                                                                                                                                                                                                               </span></div>
+<div id="LC33" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s"><span class="pl-k">EOF</span></span></div>
+<div id="LC34" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c1">echo</span> -e <span class="pl-s"><span class="pl-pds">&quot;</span>\e[0m<span class="pl-pds">&quot;</span></span>  <span class="pl-c"><span class="pl-c">#</span> 重置颜色</span></div>
+<div id="LC35" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c1">echo</span> -e <span class="pl-s"><span class="pl-pds">&quot;</span>\e[1;36m  小智服务端全量部署一键安装脚本 Ver 0.2 2025年11月16日更新 \e[0m\n<span class="pl-pds">&quot;</span></span></div>
+<div id="LC36" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">sleep 1</div>
+<div id="LC37" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">
+</div>
+<div id="LC38" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c"><span class="pl-c">#</span> 检查并安装whiptail</span></div>
+<div id="LC39" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-en">check_whiptail</span>() {</div>
+<div id="LC40" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-38 ">    <span class="pl-k">if</span> <span class="pl-k">!</span> <span class="pl-c1">command</span> -v whiptail <span class="pl-k">&amp;</span><span class="pl-k">&gt;</span> /dev/null<span class="pl-k">;</span> <span class="pl-k">then</span></div>
+<div id="LC41" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-38 ">        <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>正在安装whiptail...<span class="pl-pds">&quot;</span></span></div>
+<div id="LC42" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-38 ">        apt update</div>
+<div id="LC43" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-38 ">        apt install -y whiptail</div>
+<div id="LC44" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-38 ">    <span class="pl-k">fi</span></div>
+<div id="LC45" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">}</div>
+<div id="LC46" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">
+</div>
+<div id="LC47" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">check_whiptail</div>
+<div id="LC48" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">
+</div>
+<div id="LC49" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c"><span class="pl-c">#</span> 创建确认对话框</span></div>
+<div id="LC50" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">whiptail --title <span class="pl-s"><span class="pl-pds">&quot;</span>安装确认<span class="pl-pds">&quot;</span></span> --yesno <span class="pl-s"><span class="pl-pds">&quot;</span>即将安装小智服务端，是否继续？<span class="pl-pds">&quot;</span></span> \</div>
+<div id="LC51" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">  --yes-button <span class="pl-s"><span class="pl-pds">&quot;</span>继续<span class="pl-pds">&quot;</span></span> --no-button <span class="pl-s"><span class="pl-pds">&quot;</span>退出<span class="pl-pds">&quot;</span></span> 10 50</div>
+<div id="LC52" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">
+</div>
+<div id="LC53" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c"><span class="pl-c">#</span> 根据用户选择执行操作</span></div>
+<div id="LC54" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">case</span> <span class="pl-smi">$?</span> <span class="pl-k">in</span></div>
+<div id="LC55" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">  0)</div>
+<div id="LC56" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    ;;</div>
+<div id="LC57" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">  1)</div>
+<div id="LC58" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-c1">exit</span> 1</div>
+<div id="LC59" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    ;;</div>
+<div id="LC60" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">esac</span></div>
+<div id="LC61" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">
+</div>
+<div id="LC62" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c"><span class="pl-c">#</span> 检查root权限</span></div>
+<div id="LC63" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">if</span> [ <span class="pl-smi">$EUID</span> <span class="pl-k">-ne</span> 0 ]<span class="pl-k">;</span> <span class="pl-k">then</span></div>
+<div id="LC64" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    whiptail --title <span class="pl-s"><span class="pl-pds">&quot;</span>权限错误<span class="pl-pds">&quot;</span></span> --msgbox <span class="pl-s"><span class="pl-pds">&quot;</span>请使用root权限运行本脚本<span class="pl-pds">&quot;</span></span> 10 50</div>
+<div id="LC65" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-c1">exit</span> 1</div>
+<div id="LC66" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">fi</span></div>
+<div id="LC67" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">
+</div>
+<div id="LC68" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c"><span class="pl-c">#</span> 检查系统版本</span></div>
+<div id="LC69" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">if</span> [ <span class="pl-k">-f</span> /etc/os-release ]<span class="pl-k">;</span> <span class="pl-k">then</span></div>
+<div id="LC70" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-c1">.</span> /etc/os-release</div>
+<div id="LC71" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-k">if</span> [ <span class="pl-s"><span class="pl-pds">&quot;</span><span class="pl-smi">$ID</span><span class="pl-pds">&quot;</span></span> <span class="pl-k">!=</span> <span class="pl-s"><span class="pl-pds">&quot;</span>debian<span class="pl-pds">&quot;</span></span> ] <span class="pl-k">&amp;&amp;</span> [ <span class="pl-s"><span class="pl-pds">&quot;</span><span class="pl-smi">$ID</span><span class="pl-pds">&quot;</span></span> <span class="pl-k">!=</span> <span class="pl-s"><span class="pl-pds">&quot;</span>ubuntu<span class="pl-pds">&quot;</span></span> ]<span class="pl-k">;</span> <span class="pl-k">then</span></div>
+<div id="LC72" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        whiptail --title <span class="pl-s"><span class="pl-pds">&quot;</span>系统错误<span class="pl-pds">&quot;</span></span> --msgbox <span class="pl-s"><span class="pl-pds">&quot;</span>该脚本只支持Debian/Ubuntu系统执行<span class="pl-pds">&quot;</span></span> 10 60</div>
+<div id="LC73" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        <span class="pl-c1">exit</span> 1</div>
+<div id="LC74" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-k">fi</span></div>
+<div id="LC75" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">else</span></div>
+<div id="LC76" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    whiptail --title <span class="pl-s"><span class="pl-pds">&quot;</span>系统错误<span class="pl-pds">&quot;</span></span> --msgbox <span class="pl-s"><span class="pl-pds">&quot;</span>无法确定系统版本，该脚本只支持Debian/Ubuntu系统执行<span class="pl-pds">&quot;</span></span> 10 60</div>
+<div id="LC77" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-c1">exit</span> 1</div>
+<div id="LC78" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">fi</span></div>
+<div id="LC79" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">
+</div>
+<div id="LC80" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c"><span class="pl-c">#</span> 下载配置文件函数</span></div>
+<div id="LC81" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-en">check_and_download</span>() {</div>
+<div id="LC82" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-80 ">    <span class="pl-k">local</span> filepath=<span class="pl-smi">$1</span></div>
+<div id="LC83" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-80 ">    <span class="pl-k">local</span> url=<span class="pl-smi">$2</span></div>
+<div id="LC84" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-80 ">    <span class="pl-k">if</span> [ <span class="pl-k">!</span> <span class="pl-k">-f</span> <span class="pl-s"><span class="pl-pds">&quot;</span><span class="pl-smi">$filepath</span><span class="pl-pds">&quot;</span></span> ]<span class="pl-k">;</span> <span class="pl-k">then</span></div>
+<div id="LC85" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-80 ">        <span class="pl-k">if</span> <span class="pl-k">!</span> curl -fL --progress-bar <span class="pl-s"><span class="pl-pds">&quot;</span><span class="pl-smi">$url</span><span class="pl-pds">&quot;</span></span> -o <span class="pl-s"><span class="pl-pds">&quot;</span><span class="pl-smi">$filepath</span><span class="pl-pds">&quot;</span></span><span class="pl-k">;</span> <span class="pl-k">then</span></div>
+<div id="LC86" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-80 ">            whiptail --title <span class="pl-s"><span class="pl-pds">&quot;</span>错误<span class="pl-pds">&quot;</span></span> --msgbox <span class="pl-s"><span class="pl-pds">&quot;</span><span class="pl-smi">${filepath}</span>文件下载失败<span class="pl-pds">&quot;</span></span> 10 50</div>
+<div id="LC87" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-80 ">            <span class="pl-c1">exit</span> 1</div>
+<div id="LC88" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-80 ">        <span class="pl-k">fi</span></div>
+<div id="LC89" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-80 ">    <span class="pl-k">else</span></div>
+<div id="LC90" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-80 ">        <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span><span class="pl-smi">${filepath}</span>文件已存在，跳过下载<span class="pl-pds">&quot;</span></span></div>
+<div id="LC91" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-80 ">    <span class="pl-k">fi</span></div>
+<div id="LC92" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">}</div>
+<div id="LC93" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">
+</div>
+<div id="LC94" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c"><span class="pl-c">#</span> 执行docker compose命令的函数，优先使用docker compose，失败时回退到docker-compose</span></div>
+<div id="LC95" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-en">docker_compose</span>() {</div>
+<div id="LC96" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-94 ">    <span class="pl-k">local</span> cmd=<span class="pl-s"><span class="pl-pds">&quot;</span>docker compose <span class="pl-smi">$@</span><span class="pl-pds">&quot;</span></span></div>
+<div id="LC97" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-94 ">    <span class="pl-k">local</span> fallback_cmd=<span class="pl-s"><span class="pl-pds">&quot;</span>docker-compose <span class="pl-smi">$@</span><span class="pl-pds">&quot;</span></span></div>
+<div id="LC98" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-94 ">    </div>
+<div id="LC99" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-94 ">    <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>尝试执行: <span class="pl-smi">$cmd</span><span class="pl-pds">&quot;</span></span></div>
+<div id="LC100" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-94 ">    <span class="pl-c"><span class="pl-c">#</span> 尝试使用docker compose命令</span></div>
+<div id="LC101" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-94 ">    <span class="pl-k">if</span> <span class="pl-smi">$cmd</span><span class="pl-k">;</span> <span class="pl-k">then</span></div>
+<div id="LC102" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-94 ">        <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>docker compose命令执行成功<span class="pl-pds">&quot;</span></span></div>
+<div id="LC103" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-94 ">        <span class="pl-k">return</span> 0</div>
+<div id="LC104" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-94 ">    <span class="pl-k">else</span></div>
+<div id="LC105" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-94 ">        <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>docker compose命令执行失败，尝试回退到docker-compose<span class="pl-pds">&quot;</span></span></div>
+<div id="LC106" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-94 ">        <span class="pl-c"><span class="pl-c">#</span> 回退到docker-compose命令</span></div>
+<div id="LC107" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-94 ">        <span class="pl-k">if</span> <span class="pl-smi">$fallback_cmd</span><span class="pl-k">;</span> <span class="pl-k">then</span></div>
+<div id="LC108" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-94 ">            <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>docker-compose命令执行成功<span class="pl-pds">&quot;</span></span></div>
+<div id="LC109" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-94 ">            <span class="pl-k">return</span> 0</div>
+<div id="LC110" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-94 ">        <span class="pl-k">else</span></div>
+<div id="LC111" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-94 ">            <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>docker-compose命令执行失败<span class="pl-pds">&quot;</span></span></div>
+<div id="LC112" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-94 ">            <span class="pl-k">return</span> 1</div>
+<div id="LC113" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-94 ">        <span class="pl-k">fi</span></div>
+<div id="LC114" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-94 ">    <span class="pl-k">fi</span></div>
+<div id="LC115" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">}</div>
+<div id="LC116" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">
+</div>
+<div id="LC117" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c"><span class="pl-c">#</span> 从多个接口获取公网IP地址的函数，实现轮流查询机制</span></div>
+<div id="LC118" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-en">get_public_ip</span>() {</div>
+<div id="LC119" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">    <span class="pl-c"><span class="pl-c">#</span> 定义IP查询接口列表</span></div>
+<div id="LC120" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">    <span class="pl-k">local</span> ip_services=(</div>
+<div id="LC121" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">        <span class="pl-s"><span class="pl-pds">&quot;</span>https://myip.ipip.net<span class="pl-pds">&quot;</span></span></div>
+<div id="LC122" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">        <span class="pl-s"><span class="pl-pds">&quot;</span>https://ddns.oray.com/checkip<span class="pl-pds">&quot;</span></span></div>
+<div id="LC123" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">        <span class="pl-s"><span class="pl-pds">&quot;</span>https://ip.3322.net<span class="pl-pds">&quot;</span></span></div>
+<div id="LC124" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">        <span class="pl-s"><span class="pl-pds">&quot;</span>https://4.ipw.cn<span class="pl-pds">&quot;</span></span></div>
+<div id="LC125" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">        <span class="pl-s"><span class="pl-pds">&quot;</span>https://v4.yinghualuo.cn/bejson<span class="pl-pds">&quot;</span></span></div>
+<div id="LC126" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">    )</div>
+<div id="LC127" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">    </div>
+<div id="LC128" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">    <span class="pl-c"><span class="pl-c">#</span> 尝试每个服务，直到成功获取IP</span></div>
+<div id="LC129" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">    <span class="pl-k">for</span> <span class="pl-smi">service</span> <span class="pl-k">in</span> <span class="pl-s"><span class="pl-pds">&quot;</span><span class="pl-smi">${ip_services[@]}</span><span class="pl-pds">&quot;</span></span><span class="pl-k">;</span> <span class="pl-k">do</span>        </div>
+<div id="LC130" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">        <span class="pl-c"><span class="pl-c">#</span> 使用curl获取响应，设置超时时间为5秒</span></div>
+<div id="LC131" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">        <span class="pl-k">local</span> response</div>
+<div id="LC132" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">        response=<span class="pl-s"><span class="pl-pds">$(</span>curl -s -m 5 <span class="pl-s"><span class="pl-pds">&quot;</span><span class="pl-smi">$service</span><span class="pl-pds">&quot;</span></span> <span class="pl-k">2&gt;</span>/dev/null<span class="pl-pds">)</span></span></div>
+<div id="LC133" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">        </div>
+<div id="LC134" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">        <span class="pl-c"><span class="pl-c">#</span> 检查curl是否成功执行</span></div>
+<div id="LC135" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">        <span class="pl-k">if</span> [ <span class="pl-smi">$?</span> <span class="pl-k">-eq</span> 0 ] <span class="pl-k">&amp;&amp;</span> [ <span class="pl-k">-n</span> <span class="pl-s"><span class="pl-pds">&quot;</span><span class="pl-smi">$response</span><span class="pl-pds">&quot;</span></span> ]<span class="pl-k">;</span> <span class="pl-k">then</span></div>
+<div id="LC136" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">            <span class="pl-c"><span class="pl-c">#</span> 尝试从响应中提取IPv4地址</span></div>
+<div id="LC137" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">            <span class="pl-k">local</span> ip</div>
+<div id="LC138" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">            </div>
+<div id="LC139" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">            <span class="pl-c"><span class="pl-c">#</span> 根据不同服务的响应格式提取IP</span></div>
+<div id="LC140" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">            <span class="pl-k">case</span> <span class="pl-s"><span class="pl-pds">&quot;</span><span class="pl-smi">$service</span><span class="pl-pds">&quot;</span></span> <span class="pl-k">in</span></div>
+<div id="LC141" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">                <span class="pl-s"><span class="pl-pds">&quot;</span>https://myip.ipip.net<span class="pl-pds">&quot;</span></span>)</div>
+<div id="LC142" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">                    <span class="pl-c"><span class="pl-c">#</span> 格式示例: 当前 IP：192.168.1.1  来自于：中国 北京 北京 联通</span></div>
+<div id="LC143" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">                    ip=<span class="pl-s"><span class="pl-pds">$(</span>echo <span class="pl-s"><span class="pl-pds">&quot;</span><span class="pl-smi">$response</span><span class="pl-pds">&quot;</span></span> <span class="pl-k">|</span> grep -oE <span class="pl-s"><span class="pl-pds">&#39;</span>([0-9]{1,3}\.){3}[0-9]{1,3}<span class="pl-pds">&#39;</span></span> <span class="pl-k">|</span> head -1<span class="pl-pds">)</span></span></div>
+<div id="LC144" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">                    ;;</div>
+<div id="LC145" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">                <span class="pl-s"><span class="pl-pds">&quot;</span>https://ddns.oray.com/checkip<span class="pl-pds">&quot;</span></span>)</div>
+<div id="LC146" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">                    <span class="pl-c"><span class="pl-c">#</span> 格式示例: Current IP Address: 192.168.1.1</span></div>
+<div id="LC147" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">                    ip=<span class="pl-s"><span class="pl-pds">$(</span>echo <span class="pl-s"><span class="pl-pds">&quot;</span><span class="pl-smi">$response</span><span class="pl-pds">&quot;</span></span> <span class="pl-k">|</span> grep -oE <span class="pl-s"><span class="pl-pds">&#39;</span>([0-9]{1,3}\.){3}[0-9]{1,3}<span class="pl-pds">&#39;</span></span> <span class="pl-k">|</span> head -1<span class="pl-pds">)</span></span></div>
+<div id="LC148" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">                    ;;</div>
+<div id="LC149" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">                <span class="pl-s"><span class="pl-pds">&quot;</span>https://ip.3322.net<span class="pl-pds">&quot;</span></span>)</div>
+<div id="LC150" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">                    <span class="pl-c"><span class="pl-c">#</span> 格式示例: 192.168.1.1</span></div>
+<div id="LC151" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">                    ip=<span class="pl-s"><span class="pl-pds">$(</span>echo <span class="pl-s"><span class="pl-pds">&quot;</span><span class="pl-smi">$response</span><span class="pl-pds">&quot;</span></span> <span class="pl-k">|</span> grep -oE <span class="pl-s"><span class="pl-pds">&#39;</span>^([0-9]{1,3}\.){3}[0-9]{1,3}$<span class="pl-pds">&#39;</span></span> <span class="pl-k">|</span> head -1<span class="pl-pds">)</span></span></div>
+<div id="LC152" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">                    ;;</div>
+<div id="LC153" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">                <span class="pl-s"><span class="pl-pds">&quot;</span>https://4.ipw.cn<span class="pl-pds">&quot;</span></span>)</div>
+<div id="LC154" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">                    <span class="pl-c"><span class="pl-c">#</span> 格式示例: 192.168.1.1</span></div>
+<div id="LC155" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">                    ip=<span class="pl-s"><span class="pl-pds">$(</span>echo <span class="pl-s"><span class="pl-pds">&quot;</span><span class="pl-smi">$response</span><span class="pl-pds">&quot;</span></span> <span class="pl-k">|</span> grep -oE <span class="pl-s"><span class="pl-pds">&#39;</span>^([0-9]{1,3}\.){3}[0-9]{1,3}$<span class="pl-pds">&#39;</span></span> <span class="pl-k">|</span> head -1<span class="pl-pds">)</span></span></div>
+<div id="LC156" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">                    ;;</div>
+<div id="LC157" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">                <span class="pl-s"><span class="pl-pds">&quot;</span>https://v4.yinghualuo.cn/bejson<span class="pl-pds">&quot;</span></span>)</div>
+<div id="LC158" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">                    <span class="pl-c"><span class="pl-c">#</span> 格式示例: {&quot;is_ipv6&quot;:false,&quot;ip&quot;:&quot;192.168.1.1&quot;,&quot;location&quot;:&quot;...&quot;}</span></div>
+<div id="LC159" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">                    ip=<span class="pl-s"><span class="pl-pds">$(</span>echo <span class="pl-s"><span class="pl-pds">&quot;</span><span class="pl-smi">$response</span><span class="pl-pds">&quot;</span></span> <span class="pl-k">|</span> grep -oE <span class="pl-s"><span class="pl-pds">&#39;</span>&quot;ip&quot;:&quot;([0-9]{1,3}\.){3}[0-9]{1,3}&quot;<span class="pl-pds">&#39;</span></span> <span class="pl-k">|</span> grep -oE <span class="pl-s"><span class="pl-pds">&#39;</span>([0-9]{1,3}\.){3}[0-9]{1,3}<span class="pl-pds">&#39;</span></span> <span class="pl-k">|</span> head -1<span class="pl-pds">)</span></span></div>
+<div id="LC160" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">                    ;;</div>
+<div id="LC161" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">            <span class="pl-k">esac</span></div>
+<div id="LC162" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">            </div>
+<div id="LC163" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">            <span class="pl-c"><span class="pl-c">#</span> 验证提取到的是否为有效的IPv4地址</span></div>
+<div id="LC164" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">            <span class="pl-k">if</span> [[ <span class="pl-s"><span class="pl-pds">&quot;</span><span class="pl-smi">$ip</span><span class="pl-pds">&quot;</span></span> <span class="pl-k">=~</span> ^([0-9]{1,3}<span class="pl-cce">\.</span>){3}[0-9]{1,3}$ ]]<span class="pl-k">;</span> <span class="pl-k">then</span></div>
+<div id="LC165" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">                <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span><span class="pl-smi">$ip</span><span class="pl-pds">&quot;</span></span></div>
+<div id="LC166" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">                <span class="pl-k">return</span> 0</div>
+<div id="LC167" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">            <span class="pl-k">fi</span></div>
+<div id="LC168" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">        <span class="pl-k">fi</span></div>
+<div id="LC169" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">    <span class="pl-k">done</span></div>
+<div id="LC170" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">    </div>
+<div id="LC171" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">    <span class="pl-c"><span class="pl-c">#</span> 如果所有服务都失败，回退到本地IP</span></div>
+<div id="LC172" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">    <span class="pl-k">local</span> local_ip=<span class="pl-s"><span class="pl-pds">$(</span>hostname -I <span class="pl-k">|</span> awk <span class="pl-s"><span class="pl-pds">&#39;</span>{print $1}<span class="pl-pds">&#39;</span></span><span class="pl-pds">)</span></span></div>
+<div id="LC173" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">    <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span><span class="pl-smi">$local_ip</span><span class="pl-pds">&quot;</span></span></div>
+<div id="LC174" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-117 ">    <span class="pl-k">return</span> 1</div>
+<div id="LC175" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">}</div>
+<div id="LC176" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">
+</div>
+<div id="LC177" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c"><span class="pl-c">#</span> 检查是否已安装</span></div>
+<div id="LC178" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-en">check_installed</span>() {</div>
+<div id="LC179" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-177 ">    <span class="pl-c"><span class="pl-c">#</span> 检查目录是否存在且非空</span></div>
+<div id="LC180" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-177 ">    <span class="pl-k">if</span> [ <span class="pl-k">-d</span> <span class="pl-s"><span class="pl-pds">&quot;</span>/opt/xiaozhi-server/<span class="pl-pds">&quot;</span></span> ] <span class="pl-k">&amp;&amp;</span> [ <span class="pl-s"><span class="pl-pds">&quot;</span><span class="pl-s"><span class="pl-pds">$(</span>ls -A /opt/xiaozhi-server/<span class="pl-pds">)</span></span><span class="pl-pds">&quot;</span></span> ]<span class="pl-k">;</span> <span class="pl-k">then</span></div>
+<div id="LC181" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-177 ">        DIR_CHECK=1</div>
+<div id="LC182" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-177 ">    <span class="pl-k">else</span></div>
+<div id="LC183" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-177 ">        DIR_CHECK=0</div>
+<div id="LC184" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-177 ">    <span class="pl-k">fi</span></div>
+<div id="LC185" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-177 ">    </div>
+<div id="LC186" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-177 ">    <span class="pl-c"><span class="pl-c">#</span> 检查容器是否存在</span></div>
+<div id="LC187" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-177 ">    <span class="pl-k">if</span> docker inspect xiaozhi-esp32-server <span class="pl-k">&gt;</span> /dev/null <span class="pl-k">2&gt;&amp;1</span><span class="pl-k">;</span> <span class="pl-k">then</span></div>
+<div id="LC188" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-177 ">        CONTAINER_CHECK=1</div>
+<div id="LC189" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-177 ">    <span class="pl-k">else</span></div>
+<div id="LC190" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-177 ">        CONTAINER_CHECK=0</div>
+<div id="LC191" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-177 ">    <span class="pl-k">fi</span></div>
+<div id="LC192" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-177 ">    </div>
+<div id="LC193" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-177 ">    <span class="pl-c"><span class="pl-c">#</span> 两次检查都通过</span></div>
+<div id="LC194" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-177 ">    <span class="pl-k">if</span> [ <span class="pl-smi">$DIR_CHECK</span> <span class="pl-k">-eq</span> 1 ] <span class="pl-k">&amp;&amp;</span> [ <span class="pl-smi">$CONTAINER_CHECK</span> <span class="pl-k">-eq</span> 1 ]<span class="pl-k">;</span> <span class="pl-k">then</span></div>
+<div id="LC195" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-177 ">        <span class="pl-k">return</span> 0  <span class="pl-c"><span class="pl-c">#</span> 已安装</span></div>
+<div id="LC196" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-177 ">    <span class="pl-k">else</span></div>
+<div id="LC197" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-177 ">        <span class="pl-k">return</span> 1  <span class="pl-c"><span class="pl-c">#</span> 未安装</span></div>
+<div id="LC198" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div child-of-line-177 ">    <span class="pl-k">fi</span></div>
+<div id="LC199" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">}</div>
+<div id="LC200" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">
+</div>
+<div id="LC201" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c"><span class="pl-c">#</span> 更新相关</span></div>
+<div id="LC202" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">if</span> check_installed<span class="pl-k">;</span> <span class="pl-k">then</span></div>
+<div id="LC203" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-k">if</span> whiptail --title <span class="pl-s"><span class="pl-pds">&quot;</span>已安装检测<span class="pl-pds">&quot;</span></span> --yesno <span class="pl-s"><span class="pl-pds">&quot;</span>检测到小智服务端已安装，是否进行升级？<span class="pl-pds">&quot;</span></span> 10 60<span class="pl-k">;</span> <span class="pl-k">then</span></div>
+<div id="LC204" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        <span class="pl-c"><span class="pl-c">#</span> 用户选择升级，执行清理操作</span></div>
+<div id="LC205" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>开始升级操作...<span class="pl-pds">&quot;</span></span></div>
+<div id="LC206" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        </div>
+<div id="LC207" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        <span class="pl-c"><span class="pl-c">#</span> 停止并移除所有docker-compose服务</span></div>
+<div id="LC208" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        docker_compose -f /opt/xiaozhi-server/docker-compose_all.yml down</div>
+<div id="LC209" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        </div>
+<div id="LC210" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        <span class="pl-c"><span class="pl-c">#</span> 停止并删除特定容器（考虑容器可能不存在的情况）</span></div>
+<div id="LC211" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        containers=(</div>
+<div id="LC212" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">            <span class="pl-s"><span class="pl-pds">&quot;</span>xiaozhi-esp32-server<span class="pl-pds">&quot;</span></span></div>
+<div id="LC213" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">            <span class="pl-s"><span class="pl-pds">&quot;</span>xiaozhi-esp32-server-web<span class="pl-pds">&quot;</span></span></div>
+<div id="LC214" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">            <span class="pl-s"><span class="pl-pds">&quot;</span>xiaozhi-esp32-server-db<span class="pl-pds">&quot;</span></span></div>
+<div id="LC215" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">            <span class="pl-s"><span class="pl-pds">&quot;</span>xiaozhi-esp32-server-redis<span class="pl-pds">&quot;</span></span></div>
+<div id="LC216" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        )</div>
+<div id="LC217" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        </div>
+<div id="LC218" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        <span class="pl-k">for</span> <span class="pl-smi">container</span> <span class="pl-k">in</span> <span class="pl-s"><span class="pl-pds">&quot;</span><span class="pl-smi">${containers[@]}</span><span class="pl-pds">&quot;</span></span><span class="pl-k">;</span> <span class="pl-k">do</span></div>
+<div id="LC219" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">            <span class="pl-k">if</span> docker ps -a --format <span class="pl-s"><span class="pl-pds">&#39;</span>{{.Names}}<span class="pl-pds">&#39;</span></span> <span class="pl-k">|</span> grep -q <span class="pl-s"><span class="pl-pds">&quot;</span>^<span class="pl-smi">${container}</span>$<span class="pl-pds">&quot;</span></span><span class="pl-k">;</span> <span class="pl-k">then</span></div>
+<div id="LC220" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">                docker stop <span class="pl-s"><span class="pl-pds">&quot;</span><span class="pl-smi">$container</span><span class="pl-pds">&quot;</span></span> <span class="pl-k">&gt;</span>/dev/null <span class="pl-k">2&gt;&amp;1</span> <span class="pl-k">&amp;&amp;</span> \</div>
+<div id="LC221" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">                docker rm <span class="pl-s"><span class="pl-pds">&quot;</span><span class="pl-smi">$container</span><span class="pl-pds">&quot;</span></span> <span class="pl-k">&gt;</span>/dev/null <span class="pl-k">2&gt;&amp;1</span> <span class="pl-k">&amp;&amp;</span> \</div>
+<div id="LC222" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">                <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>成功移除容器: <span class="pl-smi">$container</span><span class="pl-pds">&quot;</span></span></div>
+<div id="LC223" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">            <span class="pl-k">else</span></div>
+<div id="LC224" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">                <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>容器不存在，跳过: <span class="pl-smi">$container</span><span class="pl-pds">&quot;</span></span></div>
+<div id="LC225" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">            <span class="pl-k">fi</span></div>
+<div id="LC226" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        <span class="pl-k">done</span></div>
+<div id="LC227" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        </div>
+<div id="LC228" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        <span class="pl-c"><span class="pl-c">#</span> 删除特定镜像（考虑镜像可能不存在的情况）</span></div>
+<div id="LC229" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        images=(</div>
+<div id="LC230" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">            <span class="pl-s"><span class="pl-pds">&quot;</span>ghcr.nju.edu.cn/xinnan-tech/xiaozhi-esp32-server:server_latest<span class="pl-pds">&quot;</span></span></div>
+<div id="LC231" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">            <span class="pl-s"><span class="pl-pds">&quot;</span>ghcr.nju.edu.cn/xinnan-tech/xiaozhi-esp32-server:web_latest<span class="pl-pds">&quot;</span></span></div>
+<div id="LC232" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        )</div>
+<div id="LC233" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        </div>
+<div id="LC234" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        <span class="pl-k">for</span> <span class="pl-smi">image</span> <span class="pl-k">in</span> <span class="pl-s"><span class="pl-pds">&quot;</span><span class="pl-smi">${images[@]}</span><span class="pl-pds">&quot;</span></span><span class="pl-k">;</span> <span class="pl-k">do</span></div>
+<div id="LC235" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">            <span class="pl-k">if</span> docker images --format <span class="pl-s"><span class="pl-pds">&#39;</span>{{.Repository}}:{{.Tag}}<span class="pl-pds">&#39;</span></span> <span class="pl-k">|</span> grep -q <span class="pl-s"><span class="pl-pds">&quot;</span>^<span class="pl-smi">${image}</span>$<span class="pl-pds">&quot;</span></span><span class="pl-k">;</span> <span class="pl-k">then</span></div>
+<div id="LC236" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">                docker rmi <span class="pl-s"><span class="pl-pds">&quot;</span><span class="pl-smi">$image</span><span class="pl-pds">&quot;</span></span> <span class="pl-k">&gt;</span>/dev/null <span class="pl-k">2&gt;&amp;1</span> <span class="pl-k">&amp;&amp;</span> \</div>
+<div id="LC237" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">                <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>成功删除镜像: <span class="pl-smi">$image</span><span class="pl-pds">&quot;</span></span></div>
+<div id="LC238" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">            <span class="pl-k">else</span></div>
+<div id="LC239" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">                <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>镜像不存在，跳过: <span class="pl-smi">$image</span><span class="pl-pds">&quot;</span></span></div>
+<div id="LC240" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">            <span class="pl-k">fi</span></div>
+<div id="LC241" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        <span class="pl-k">done</span></div>
+<div id="LC242" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        </div>
+<div id="LC243" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>所有清理操作完成<span class="pl-pds">&quot;</span></span></div>
+<div id="LC244" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        </div>
+<div id="LC245" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        <span class="pl-c"><span class="pl-c">#</span> 备份原有配置文件</span></div>
+<div id="LC246" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        mkdir -p /opt/xiaozhi-server/backup/</div>
+<div id="LC247" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        <span class="pl-k">if</span> [ <span class="pl-k">-f</span> /opt/xiaozhi-server/data/.config.yaml ]<span class="pl-k">;</span> <span class="pl-k">then</span></div>
+<div id="LC248" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">            cp /opt/xiaozhi-server/data/.config.yaml /opt/xiaozhi-server/backup/.config.yaml</div>
+<div id="LC249" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">            <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>已备份原有配置文件到 /opt/xiaozhi-server/backup/.config.yaml<span class="pl-pds">&quot;</span></span></div>
+<div id="LC250" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        <span class="pl-k">fi</span></div>
+<div id="LC251" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        </div>
+<div id="LC252" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        <span class="pl-c"><span class="pl-c">#</span> 下载最新版配置文件</span></div>
+<div id="LC253" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        check_and_download <span class="pl-s"><span class="pl-pds">&quot;</span>/opt/xiaozhi-server/docker-compose_all.yml<span class="pl-pds">&quot;</span></span> <span class="pl-s"><span class="pl-pds">&quot;</span>https://ghfast.top/https://raw.githubusercontent.com/xinnan-tech/xiaozhi-esp32-server/refs/heads/main/main/xiaozhi-server/docker-compose_all.yml<span class="pl-pds">&quot;</span></span></div>
+<div id="LC254" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        check_and_download <span class="pl-s"><span class="pl-pds">&quot;</span>/opt/xiaozhi-server/data/.config.yaml<span class="pl-pds">&quot;</span></span> <span class="pl-s"><span class="pl-pds">&quot;</span>https://ghfast.top/https://raw.githubusercontent.com/xinnan-tech/xiaozhi-esp32-server/refs/heads/main/main/xiaozhi-server/config_from_api.yaml<span class="pl-pds">&quot;</span></span></div>
+<div id="LC255" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        </div>
+<div id="LC256" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        <span class="pl-c"><span class="pl-c">#</span> 启动Docker服务</span></div>
+<div id="LC257" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>开始启动最新版本服务...<span class="pl-pds">&quot;</span></span></div>
+<div id="LC258" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        <span class="pl-c"><span class="pl-c">#</span> 升级完成后标记，跳过后续下载步骤</span></div>
+<div id="LC259" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        UPGRADE_COMPLETED=1</div>
+<div id="LC260" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        docker_compose -f /opt/xiaozhi-server/docker-compose_all.yml up -d</div>
+<div id="LC261" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-k">else</span></div>
+<div id="LC262" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">          whiptail --title <span class="pl-s"><span class="pl-pds">&quot;</span>跳过升级<span class="pl-pds">&quot;</span></span> --msgbox <span class="pl-s"><span class="pl-pds">&quot;</span>已取消升级，将继续使用当前版本。<span class="pl-pds">&quot;</span></span> 10 50</div>
+<div id="LC263" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">          <span class="pl-c"><span class="pl-c">#</span> 跳过升级，继续执行后续安装流程</span></div>
+<div id="LC264" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-k">fi</span></div>
+<div id="LC265" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">fi</span></div>
+<div id="LC266" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">
+</div>
+<div id="LC267" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">
+</div>
+<div id="LC268" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c"><span class="pl-c">#</span> 检查curl安装</span></div>
+<div id="LC269" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">if</span> <span class="pl-k">!</span> <span class="pl-c1">command</span> -v curl <span class="pl-k">&amp;</span><span class="pl-k">&gt;</span> /dev/null<span class="pl-k">;</span> <span class="pl-k">then</span></div>
+<div id="LC270" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>------------------------------------------------------------<span class="pl-pds">&quot;</span></span></div>
+<div id="LC271" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>未检测到curl，正在安装...<span class="pl-pds">&quot;</span></span></div>
+<div id="LC272" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    apt update</div>
+<div id="LC273" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    apt install -y curl</div>
+<div id="LC274" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">else</span></div>
+<div id="LC275" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>------------------------------------------------------------<span class="pl-pds">&quot;</span></span></div>
+<div id="LC276" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>curl已安装，跳过安装步骤<span class="pl-pds">&quot;</span></span></div>
+<div id="LC277" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">fi</span></div>
+<div id="LC278" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">
+</div>
+<div id="LC279" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c"><span class="pl-c">#</span> 检查Docker安装</span></div>
+<div id="LC280" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">if</span> <span class="pl-k">!</span> <span class="pl-c1">command</span> -v docker <span class="pl-k">&amp;</span><span class="pl-k">&gt;</span> /dev/null<span class="pl-k">;</span> <span class="pl-k">then</span></div>
+<div id="LC281" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>------------------------------------------------------------<span class="pl-pds">&quot;</span></span></div>
+<div id="LC282" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>未检测到Docker，正在安装...<span class="pl-pds">&quot;</span></span></div>
+<div id="LC283" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    </div>
+<div id="LC284" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-c"><span class="pl-c">#</span> 使用国内镜像源替代官方源</span></div>
+<div id="LC285" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    DISTRO=<span class="pl-s"><span class="pl-pds">$(</span>lsb_release -cs<span class="pl-pds">)</span></span></div>
+<div id="LC286" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    MIRROR_URL=<span class="pl-s"><span class="pl-pds">&quot;</span>https://mirrors.aliyun.com/docker-ce/linux/ubuntu<span class="pl-pds">&quot;</span></span></div>
+<div id="LC287" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    GPG_URL=<span class="pl-s"><span class="pl-pds">&quot;</span>https://mirrors.aliyun.com/docker-ce/linux/ubuntu/gpg<span class="pl-pds">&quot;</span></span></div>
+<div id="LC288" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    </div>
+<div id="LC289" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-c"><span class="pl-c">#</span> 安装基础依赖</span></div>
+<div id="LC290" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    apt update</div>
+<div id="LC291" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    apt install -y apt-transport-https ca-certificates curl software-properties-common gnupg</div>
+<div id="LC292" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    </div>
+<div id="LC293" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-c"><span class="pl-c">#</span> 创建密钥目录并添加国内镜像源密钥</span></div>
+<div id="LC294" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    mkdir -p /etc/apt/keyrings</div>
+<div id="LC295" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    curl -fsSL <span class="pl-s"><span class="pl-pds">&quot;</span><span class="pl-smi">$GPG_URL</span><span class="pl-pds">&quot;</span></span> <span class="pl-k">|</span> gpg --dearmor -o /etc/apt/keyrings/docker.gpg</div>
+<div id="LC296" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    </div>
+<div id="LC297" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-c"><span class="pl-c">#</span> 添加国内镜像源</span></div>
+<div id="LC298" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>deb [arch=<span class="pl-s"><span class="pl-pds">$(</span>dpkg --print-architecture<span class="pl-pds">)</span></span> signed-by=/etc/apt/keyrings/docker.gpg] <span class="pl-smi">$MIRROR_URL</span> <span class="pl-smi">$DISTRO</span> stable<span class="pl-pds">&quot;</span></span> \</div>
+<div id="LC299" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        <span class="pl-k">&gt;</span> /etc/apt/sources.list.d/docker.list</div>
+<div id="LC300" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    </div>
+<div id="LC301" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-c"><span class="pl-c">#</span> 添加备用官方源密钥（避免国内源密钥验证失败）</span></div>
+<div id="LC302" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 7EA0A9C3F273FCD8 <span class="pl-k">2&gt;</span>/dev/null <span class="pl-k">||</span> \</div>
+<div id="LC303" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>警告：部分密钥添加失败，继续尝试安装...<span class="pl-pds">&quot;</span></span></div>
+<div id="LC304" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    </div>
+<div id="LC305" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-c"><span class="pl-c">#</span> 安装Docker</span></div>
+<div id="LC306" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    apt update</div>
+<div id="LC307" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    apt install -y docker-ce docker-ce-cli containerd.io</div>
+<div id="LC308" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    </div>
+<div id="LC309" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-c"><span class="pl-c">#</span> 启动服务</span></div>
+<div id="LC310" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    systemctl start docker</div>
+<div id="LC311" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    systemctl <span class="pl-c1">enable</span> docker</div>
+<div id="LC312" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    </div>
+<div id="LC313" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-c"><span class="pl-c">#</span> 检查是否安装成功</span></div>
+<div id="LC314" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-k">if</span> docker --version<span class="pl-k">;</span> <span class="pl-k">then</span></div>
+<div id="LC315" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>------------------------------------------------------------<span class="pl-pds">&quot;</span></span></div>
+<div id="LC316" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>Docker安装完成！<span class="pl-pds">&quot;</span></span></div>
+<div id="LC317" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-k">else</span></div>
+<div id="LC318" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        whiptail --title <span class="pl-s"><span class="pl-pds">&quot;</span>错误<span class="pl-pds">&quot;</span></span> --msgbox <span class="pl-s"><span class="pl-pds">&quot;</span>Docker安装失败，请检查日志。<span class="pl-pds">&quot;</span></span> 10 50</div>
+<div id="LC319" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        <span class="pl-c1">exit</span> 1</div>
+<div id="LC320" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-k">fi</span></div>
+<div id="LC321" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">else</span></div>
+<div id="LC322" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>Docker已安装，跳过安装步骤<span class="pl-pds">&quot;</span></span></div>
+<div id="LC323" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">fi</span></div>
+<div id="LC324" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">
+</div>
+<div id="LC325" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c"><span class="pl-c">#</span> Docker镜像源配置</span></div>
+<div id="LC326" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">MIRROR_OPTIONS=(</div>
+<div id="LC327" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-s"><span class="pl-pds">&quot;</span>1<span class="pl-pds">&quot;</span></span> <span class="pl-s"><span class="pl-pds">&quot;</span>轩辕镜像<span class="pl-pds">&quot;</span></span></div>
+<div id="LC328" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-s"><span class="pl-pds">&quot;</span>2<span class="pl-pds">&quot;</span></span> <span class="pl-s"><span class="pl-pds">&quot;</span>毫秒镜像<span class="pl-pds">&quot;</span></span></div>
+<div id="LC329" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-s"><span class="pl-pds">&quot;</span>3<span class="pl-pds">&quot;</span></span> <span class="pl-s"><span class="pl-pds">&quot;</span>腾讯云镜像源<span class="pl-pds">&quot;</span></span></div>
+<div id="LC330" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-s"><span class="pl-pds">&quot;</span>4<span class="pl-pds">&quot;</span></span> <span class="pl-s"><span class="pl-pds">&quot;</span>中科大镜像源<span class="pl-pds">&quot;</span></span></div>
+<div id="LC331" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-s"><span class="pl-pds">&quot;</span>5<span class="pl-pds">&quot;</span></span> <span class="pl-s"><span class="pl-pds">&quot;</span>网易163镜像源<span class="pl-pds">&quot;</span></span></div>
+<div id="LC332" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-s"><span class="pl-pds">&quot;</span>6<span class="pl-pds">&quot;</span></span> <span class="pl-s"><span class="pl-pds">&quot;</span>华为云镜像源<span class="pl-pds">&quot;</span></span></div>
+<div id="LC333" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-s"><span class="pl-pds">&quot;</span>7<span class="pl-pds">&quot;</span></span> <span class="pl-s"><span class="pl-pds">&quot;</span>阿里云镜像源<span class="pl-pds">&quot;</span></span></div>
+<div id="LC334" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-s"><span class="pl-pds">&quot;</span>8<span class="pl-pds">&quot;</span></span> <span class="pl-s"><span class="pl-pds">&quot;</span>自定义镜像源<span class="pl-pds">&quot;</span></span></div>
+<div id="LC335" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-s"><span class="pl-pds">&quot;</span>9<span class="pl-pds">&quot;</span></span> <span class="pl-s"><span class="pl-pds">&quot;</span>跳过配置<span class="pl-pds">&quot;</span></span></div>
+<div id="LC336" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">)</div>
+<div id="LC337" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">
+</div>
+<div id="LC338" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">MIRROR_CHOICE=<span class="pl-s"><span class="pl-pds">$(</span>whiptail --title <span class="pl-s"><span class="pl-pds">&quot;</span>选择Docker镜像源<span class="pl-pds">&quot;</span></span> --menu <span class="pl-s"><span class="pl-pds">&quot;</span>请选择要使用的Docker镜像源<span class="pl-pds">&quot;</span></span> 20 60 10 \</span></div>
+<div id="LC339" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s"><span class="pl-s"><span class="pl-pds">&quot;</span><span class="pl-smi">${MIRROR_OPTIONS[@]}</span><span class="pl-pds">&quot;</span></span> <span class="pl-k">3&gt;&amp;1</span> <span class="pl-k">1&gt;&amp;2</span> <span class="pl-k">2&gt;&amp;3</span><span class="pl-pds">)</span></span> <span class="pl-k">||</span> {</div>
+<div id="LC340" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>用户取消选择，退出脚本<span class="pl-pds">&quot;</span></span></div>
+<div id="LC341" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-c1">exit</span> 1</div>
+<div id="LC342" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">}</div>
+<div id="LC343" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">
+</div>
+<div id="LC344" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">case</span> <span class="pl-smi">$MIRROR_CHOICE</span> <span class="pl-k">in</span></div>
+<div id="LC345" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    1) MIRROR_URL=<span class="pl-s"><span class="pl-pds">&quot;</span>https://docker.xuanyuan.me<span class="pl-pds">&quot;</span></span> ;; </div>
+<div id="LC346" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    2) MIRROR_URL=<span class="pl-s"><span class="pl-pds">&quot;</span>https://docker.1ms.run<span class="pl-pds">&quot;</span></span> ;; </div>
+<div id="LC347" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    3) MIRROR_URL=<span class="pl-s"><span class="pl-pds">&quot;</span>https://mirror.ccs.tencentyun.com<span class="pl-pds">&quot;</span></span> ;; </div>
+<div id="LC348" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    4) MIRROR_URL=<span class="pl-s"><span class="pl-pds">&quot;</span>https://docker.mirrors.ustc.edu.cn<span class="pl-pds">&quot;</span></span> ;; </div>
+<div id="LC349" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    5) MIRROR_URL=<span class="pl-s"><span class="pl-pds">&quot;</span>https://hub-mirror.c.163.com<span class="pl-pds">&quot;</span></span> ;; </div>
+<div id="LC350" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    6) MIRROR_URL=<span class="pl-s"><span class="pl-pds">&quot;</span>https://05f073ad3c0010ea0f4bc00b7105ec20.mirror.swr.myhuaweicloud.com<span class="pl-pds">&quot;</span></span> ;; </div>
+<div id="LC351" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    7) MIRROR_URL=<span class="pl-s"><span class="pl-pds">&quot;</span>https://registry.aliyuncs.com<span class="pl-pds">&quot;</span></span> ;; </div>
+<div id="LC352" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    8) MIRROR_URL=<span class="pl-s"><span class="pl-pds">$(</span>whiptail --title <span class="pl-s"><span class="pl-pds">&quot;</span>自定义镜像源<span class="pl-pds">&quot;</span></span> --inputbox <span class="pl-s"><span class="pl-pds">&quot;</span>请输入完整的镜像源URL:\n例如: https://docker.example.com<span class="pl-pds">&quot;</span></span> 10 60 <span class="pl-k">3&gt;&amp;1</span> <span class="pl-k">1&gt;&amp;2</span> <span class="pl-k">2&gt;&amp;3</span><span class="pl-pds">)</span></span> ;; </div>
+<div id="LC353" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    9) MIRROR_URL=<span class="pl-s"><span class="pl-pds">&quot;</span><span class="pl-pds">&quot;</span></span> ;; </div>
+<div id="LC354" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">esac</span></div>
+<div id="LC355" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">
+</div>
+<div id="LC356" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">if</span> [ <span class="pl-k">-n</span> <span class="pl-s"><span class="pl-pds">&quot;</span><span class="pl-smi">$MIRROR_URL</span><span class="pl-pds">&quot;</span></span> ]<span class="pl-k">;</span> <span class="pl-k">then</span></div>
+<div id="LC357" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    mkdir -p /etc/docker</div>
+<div id="LC358" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-k">if</span> [ <span class="pl-k">-f</span> /etc/docker/daemon.json ]<span class="pl-k">;</span> <span class="pl-k">then</span></div>
+<div id="LC359" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        cp /etc/docker/daemon.json /etc/docker/daemon.json.bak</div>
+<div id="LC360" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-k">fi</span></div>
+<div id="LC361" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    cat <span class="pl-k">&gt;</span> /etc/docker/daemon.json <span class="pl-s"><span class="pl-k">&lt;&lt;</span><span class="pl-k">EOF</span></span></div>
+<div id="LC362" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s">{</span></div>
+<div id="LC363" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s">    &quot;dns&quot;: [&quot;8.8.8.8&quot;, &quot;114.114.114.114&quot;],</span></div>
+<div id="LC364" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s">    &quot;registry-mirrors&quot;: [&quot;<span class="pl-smi">$MIRROR_URL</span>&quot;]</span></div>
+<div id="LC365" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s">}</span></div>
+<div id="LC366" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s"><span class="pl-k">EOF</span></span></div>
+<div id="LC367" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    whiptail --title <span class="pl-s"><span class="pl-pds">&quot;</span>配置成功<span class="pl-pds">&quot;</span></span> --msgbox <span class="pl-s"><span class="pl-pds">&quot;</span>已成功添加镜像源: <span class="pl-smi">$MIRROR_URL</span>\n请按Enter键重启Docker服务并继续...<span class="pl-pds">&quot;</span></span> 12 60</div>
+<div id="LC368" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>------------------------------------------------------------<span class="pl-pds">&quot;</span></span></div>
+<div id="LC369" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>开始重启Docker服务...<span class="pl-pds">&quot;</span></span></div>
+<div id="LC370" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    systemctl restart docker.service</div>
+<div id="LC371" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">fi</span></div>
+<div id="LC372" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">
+</div>
+<div id="LC373" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c"><span class="pl-c">#</span> 创建安装目录</span></div>
+<div id="LC374" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>------------------------------------------------------------<span class="pl-pds">&quot;</span></span></div>
+<div id="LC375" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>开始创建安装目录...<span class="pl-pds">&quot;</span></span></div>
+<div id="LC376" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c"><span class="pl-c">#</span> 检查并创建数据目录</span></div>
+<div id="LC377" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">if</span> [ <span class="pl-k">!</span> <span class="pl-k">-d</span> /opt/xiaozhi-server/data ]<span class="pl-k">;</span> <span class="pl-k">then</span></div>
+<div id="LC378" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    mkdir -p /opt/xiaozhi-server/data</div>
+<div id="LC379" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>已创建数据目录: /opt/xiaozhi-server/data<span class="pl-pds">&quot;</span></span></div>
+<div id="LC380" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">else</span></div>
+<div id="LC381" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>目录xiaozhi-server/data已存在，跳过创建<span class="pl-pds">&quot;</span></span></div>
+<div id="LC382" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">fi</span></div>
+<div id="LC383" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">
+</div>
+<div id="LC384" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c"><span class="pl-c">#</span> 检查并创建模型目录</span></div>
+<div id="LC385" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">if</span> [ <span class="pl-k">!</span> <span class="pl-k">-d</span> /opt/xiaozhi-server/models/SenseVoiceSmall ]<span class="pl-k">;</span> <span class="pl-k">then</span></div>
+<div id="LC386" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    mkdir -p /opt/xiaozhi-server/models/SenseVoiceSmall</div>
+<div id="LC387" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>已创建模型目录: /opt/xiaozhi-server/models/SenseVoiceSmall<span class="pl-pds">&quot;</span></span></div>
+<div id="LC388" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">else</span></div>
+<div id="LC389" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>目录xiaozhi-server/models/SenseVoiceSmall已存在，跳过创建<span class="pl-pds">&quot;</span></span></div>
+<div id="LC390" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">fi</span></div>
+<div id="LC391" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">
+</div>
+<div id="LC392" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>------------------------------------------------------------<span class="pl-pds">&quot;</span></span></div>
+<div id="LC393" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>开始下载语音识别模型<span class="pl-pds">&quot;</span></span></div>
+<div id="LC394" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c"><span class="pl-c">#</span> 下载模型文件</span></div>
+<div id="LC395" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">MODEL_PATH=<span class="pl-s"><span class="pl-pds">&quot;</span>/opt/xiaozhi-server/models/SenseVoiceSmall/model.pt<span class="pl-pds">&quot;</span></span></div>
+<div id="LC396" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">if</span> [ <span class="pl-k">!</span> <span class="pl-k">-f</span> <span class="pl-s"><span class="pl-pds">&quot;</span><span class="pl-smi">$MODEL_PATH</span><span class="pl-pds">&quot;</span></span> ]<span class="pl-k">;</span> <span class="pl-k">then</span></div>
+<div id="LC397" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    (</div>
+<div id="LC398" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-k">for</span> <span class="pl-smi">i</span> <span class="pl-k">in</span> {1..20}<span class="pl-k">;</span> <span class="pl-k">do</span></div>
+<div id="LC399" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">$((</span>i<span class="pl-k">*</span><span class="pl-c1">5</span><span class="pl-pds">))</span></span></div>
+<div id="LC400" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        sleep 0.1</div>
+<div id="LC401" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-k">done</span></div>
+<div id="LC402" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    ) <span class="pl-k">|</span> whiptail --title <span class="pl-s"><span class="pl-pds">&quot;</span>下载中<span class="pl-pds">&quot;</span></span> --gauge <span class="pl-s"><span class="pl-pds">&quot;</span>开始下载语音识别模型...<span class="pl-pds">&quot;</span></span> 10 60 0</div>
+<div id="LC403" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    curl -fL --progress-bar https://modelscope.cn/models/iic/SenseVoiceSmall/resolve/master/model.pt -o <span class="pl-s"><span class="pl-pds">&quot;</span><span class="pl-smi">$MODEL_PATH</span><span class="pl-pds">&quot;</span></span> <span class="pl-k">||</span> {</div>
+<div id="LC404" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        whiptail --title <span class="pl-s"><span class="pl-pds">&quot;</span>错误<span class="pl-pds">&quot;</span></span> --msgbox <span class="pl-s"><span class="pl-pds">&quot;</span>model.pt文件下载失败<span class="pl-pds">&quot;</span></span> 10 50</div>
+<div id="LC405" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        <span class="pl-c1">exit</span> 1</div>
+<div id="LC406" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    }</div>
+<div id="LC407" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">else</span></div>
+<div id="LC408" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>model.pt文件已存在，跳过下载<span class="pl-pds">&quot;</span></span></div>
+<div id="LC409" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">fi</span></div>
+<div id="LC410" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">
+</div>
+<div id="LC411" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c"><span class="pl-c">#</span> 如果不是升级完成，才执行下载</span></div>
+<div id="LC412" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">if</span> [ <span class="pl-k">-z</span> <span class="pl-s"><span class="pl-pds">&quot;</span><span class="pl-smi">$UPGRADE_COMPLETED</span><span class="pl-pds">&quot;</span></span> ]<span class="pl-k">;</span> <span class="pl-k">then</span></div>
+<div id="LC413" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    check_and_download <span class="pl-s"><span class="pl-pds">&quot;</span>/opt/xiaozhi-server/docker-compose_all.yml<span class="pl-pds">&quot;</span></span> <span class="pl-s"><span class="pl-pds">&quot;</span>https://ghfast.top/https://raw.githubusercontent.com/xinnan-tech/xiaozhi-esp32-server/refs/heads/main/main/xiaozhi-server/docker-compose_all.yml<span class="pl-pds">&quot;</span></span></div>
+<div id="LC414" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    check_and_download <span class="pl-s"><span class="pl-pds">&quot;</span>/opt/xiaozhi-server/data/.config.yaml<span class="pl-pds">&quot;</span></span> <span class="pl-s"><span class="pl-pds">&quot;</span>https://ghfast.top/https://raw.githubusercontent.com/xinnan-tech/xiaozhi-esp32-server/refs/heads/main/main/xiaozhi-server/config_from_api.yaml<span class="pl-pds">&quot;</span></span></div>
+<div id="LC415" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">fi</span></div>
+<div id="LC416" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">
+</div>
+<div id="LC417" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c"><span class="pl-c">#</span> 启动Docker服务</span></div>
+<div id="LC418" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">(</div>
+<div id="LC419" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>------------------------------------------------------------<span class="pl-pds">&quot;</span></span></div>
+<div id="LC420" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>正在拉取Docker镜像...<span class="pl-pds">&quot;</span></span></div>
+<div id="LC421" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>这可能需要几分钟时间，请耐心等待<span class="pl-pds">&quot;</span></span></div>
+<div id="LC422" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">docker_compose -f /opt/xiaozhi-server/docker-compose_all.yml up -d</div>
+<div id="LC423" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">
+</div>
+<div id="LC424" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">if</span> [ <span class="pl-smi">$?</span> <span class="pl-k">-ne</span> 0 ]<span class="pl-k">;</span> <span class="pl-k">then</span></div>
+<div id="LC425" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    whiptail --title <span class="pl-s"><span class="pl-pds">&quot;</span>错误<span class="pl-pds">&quot;</span></span> --msgbox <span class="pl-s"><span class="pl-pds">&quot;</span>Docker服务启动失败，请尝试更换镜像源后重新执行本脚本<span class="pl-pds">&quot;</span></span> 10 60</div>
+<div id="LC426" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-c1">exit</span> 1</div>
+<div id="LC427" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">fi</span></div>
+<div id="LC428" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">
+</div>
+<div id="LC429" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>------------------------------------------------------------<span class="pl-pds">&quot;</span></span></div>
+<div id="LC430" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>正在检查服务启动状态...<span class="pl-pds">&quot;</span></span></div>
+<div id="LC431" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">TIMEOUT=300</div>
+<div id="LC432" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">START_TIME=<span class="pl-s"><span class="pl-pds">$(</span>date +%s<span class="pl-pds">)</span></span></div>
+<div id="LC433" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">while</span> <span class="pl-c1">true</span><span class="pl-k">;</span> <span class="pl-k">do</span></div>
+<div id="LC434" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    CURRENT_TIME=<span class="pl-s"><span class="pl-pds">$(</span>date +%s<span class="pl-pds">)</span></span></div>
+<div id="LC435" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-k">if</span> [ <span class="pl-s"><span class="pl-pds">$((</span>CURRENT_TIME <span class="pl-k">-</span> START_TIME<span class="pl-pds">))</span></span> <span class="pl-k">-gt</span> <span class="pl-smi">$TIMEOUT</span> ]<span class="pl-k">;</span> <span class="pl-k">then</span></div>
+<div id="LC436" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        whiptail --title <span class="pl-s"><span class="pl-pds">&quot;</span>错误<span class="pl-pds">&quot;</span></span> --msgbox <span class="pl-s"><span class="pl-pds">&quot;</span>服务启动超时，未在指定时间内找到预期日志内容<span class="pl-pds">&quot;</span></span> 10 60</div>
+<div id="LC437" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        <span class="pl-c1">exit</span> 1</div>
+<div id="LC438" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-k">fi</span></div>
+<div id="LC439" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    </div>
+<div id="LC440" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-k">if</span> docker logs xiaozhi-esp32-server-web <span class="pl-k">2&gt;&amp;1</span> <span class="pl-k">|</span> grep -q <span class="pl-s"><span class="pl-pds">&quot;</span>Started AdminApplication in<span class="pl-pds">&quot;</span></span><span class="pl-k">;</span> <span class="pl-k">then</span></div>
+<div id="LC441" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">        <span class="pl-c1">break</span></div>
+<div id="LC442" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-k">fi</span></div>
+<div id="LC443" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    sleep 1</div>
+<div id="LC444" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">done</span></div>
+<div id="LC445" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">
+</div>
+<div id="LC446" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>服务端启动成功！正在完成配置...<span class="pl-pds">&quot;</span></span></div>
+<div id="LC447" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>正在启动服务...<span class="pl-pds">&quot;</span></span></div>
+<div id="LC448" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    docker_compose -f /opt/xiaozhi-server/docker-compose_all.yml up -d</div>
+<div id="LC449" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    <span class="pl-c1">echo</span> <span class="pl-s"><span class="pl-pds">&quot;</span>服务启动完成！<span class="pl-pds">&quot;</span></span></div>
+<div id="LC450" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">)</div>
+<div id="LC451" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">
+</div>
+<div id="LC452" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c"><span class="pl-c">#</span> 密钥配置</span></div>
+<div id="LC453" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">
+</div>
+<div id="LC454" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c"><span class="pl-c">#</span> 获取服务器公网地址</span></div>
+<div id="LC455" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">PUBLIC_IP=<span class="pl-s"><span class="pl-pds">$(</span>get_public_ip<span class="pl-pds">)</span></span></div>
+<div id="LC456" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">whiptail --title <span class="pl-s"><span class="pl-pds">&quot;</span>配置服务器密钥<span class="pl-pds">&quot;</span></span> --msgbox <span class="pl-s"><span class="pl-pds">&quot;</span>请使用浏览器，访问下方链接，打开智控台并注册账号: <span class="pl-cce">\</span></span></div>
+<div id="LC457" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s"></span></div>
+<div id="LC458" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s">内网地址：http://127.0.0.1:8002/ <span class="pl-cce">\</span></span></div>
+<div id="LC459" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s"></span></div>
+<div id="LC460" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s">公网地址：http://<span class="pl-smi">$PUBLIC_IP</span>:8002/ (若是云服务器请在服务器安全组放行端口 8000 8001 8002)。<span class="pl-cce">\</span></span></div>
+<div id="LC461" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s"></span></div>
+<div id="LC462" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s">注册的第一个用户即是超级管理员，以后注册的用户都是普通用户。普通用户只能绑定设备和配置智能体; 超级管理员可以进行模型管理、用户管理、参数配置等功能。<span class="pl-cce">\</span></span></div>
+<div id="LC463" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s"></span></div>
+<div id="LC464" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s">注册好后请按Enter键继续<span class="pl-pds">&quot;</span></span> 18 70</div>
+<div id="LC465" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">SECRET_KEY=<span class="pl-s"><span class="pl-pds">$(</span>whiptail --title <span class="pl-s"><span class="pl-pds">&quot;</span>配置服务器密钥<span class="pl-pds">&quot;</span></span> --inputbox <span class="pl-s"><span class="pl-pds">&quot;</span>请使用超级管理员账号登录智控台\n内网地址：http://127.0.0.1:8002/ <span class="pl-cce">\</span></span></span></div>
+<div id="LC466" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s"><span class="pl-s">公网地址：http://<span class="pl-smi">$PUBLIC_IP</span>:8002/\n在顶部菜单 参数字典 → 参数管理 找到参数编码: server.secret (服务器密钥) <span class="pl-cce">\</span></span></span></div>
+<div id="LC467" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s"><span class="pl-s">复制该参数值并输入到下面输入框\n\n请输入密钥(留空则跳过配置):<span class="pl-pds">&quot;</span></span> 15 60 <span class="pl-k">3&gt;&amp;1</span> <span class="pl-k">1&gt;&amp;2</span> <span class="pl-k">2&gt;&amp;3</span><span class="pl-pds">)</span></span></div>
+<div id="LC468" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">
+</div>
+<div id="LC469" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">if</span> [ <span class="pl-k">-n</span> <span class="pl-s"><span class="pl-pds">&quot;</span><span class="pl-smi">$SECRET_KEY</span><span class="pl-pds">&quot;</span></span> ]<span class="pl-k">;</span> <span class="pl-k">then</span></div>
+<div id="LC470" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    python3 -c <span class="pl-s"><span class="pl-pds">&quot;</span></span></div>
+<div id="LC471" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s">import sys, yaml; </span></div>
+<div id="LC472" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s">config_path = &#39;/opt/xiaozhi-server/data/.config.yaml&#39;; </span></div>
+<div id="LC473" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s">with open(config_path, &#39;r&#39;) as f: </span></div>
+<div id="LC474" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s">    config = yaml.safe_load(f) or {}; </span></div>
+<div id="LC475" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s">config[&#39;manager-api&#39;] = {&#39;url&#39;: &#39;http://xiaozhi-esp32-server-web:8002/xiaozhi&#39;, &#39;secret&#39;: &#39;<span class="pl-smi">$SECRET_KEY</span>&#39;}; </span></div>
+<div id="LC476" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s">with open(config_path, &#39;w&#39;) as f: </span></div>
+<div id="LC477" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s">    yaml.dump(config, f); </span></div>
+<div id="LC478" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s"><span class="pl-pds">&quot;</span></span></div>
+<div id="LC479" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">    docker restart xiaozhi-esp32-server</div>
+<div id="LC480" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-k">fi</span></div>
+<div id="LC481" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">
+</div>
+<div id="LC482" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c"><span class="pl-c">#</span> 修复日志文件获取不到ws的问题，改为硬编码</span></div>
+<div id="LC483" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-c"><span class="pl-c">#</span> 复用之前获取的PUBLIC_IP变量，避免重复调用API</span></div>
+<div id="LC484" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div ">whiptail --title <span class="pl-s"><span class="pl-pds">&quot;</span>安装完成！<span class="pl-pds">&quot;</span></span> --msgbox <span class="pl-s"><span class="pl-pds">&quot;</span><span class="pl-cce">\</span></span></div>
+<div id="LC485" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s">服务端相关地址如下：\n<span class="pl-cce">\</span></span></div>
+<div id="LC486" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s">公网地址:\n<span class="pl-cce">\</span></span></div>
+<div id="LC487" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s">管理后台: http://<span class="pl-smi">$PUBLIC_IP</span>:8002\n<span class="pl-cce">\</span></span></div>
+<div id="LC488" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s">OTA: http://<span class="pl-smi">$PUBLIC_IP</span>:8002/xiaozhi/ota/\n<span class="pl-cce">\</span></span></div>
+<div id="LC489" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s">视觉分析接口: http://<span class="pl-smi">$PUBLIC_IP</span>:8003/mcp/vision/explain\n<span class="pl-cce">\</span></span></div>
+<div id="LC490" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s">WebSocket: ws://<span class="pl-smi">$PUBLIC_IP</span>:8000/xiaozhi/v1/\n<span class="pl-cce">\</span></span></div>
+<div id="LC491" class="react-code-text react-code-line-contents-no-virtualization react-file-line html-div "><span class="pl-s">\n安装完毕！感谢您的使用！\n按Enter键退出...<span class="pl-pds">&quot;</span></span> 20 70</div></div></div></div></div><div id="copilot-button-container"></div></div><div id="highlighted-line-menu-container"></div></div></div><button hidden="" data-testid="hotkey-button" data-hotkey-scope="read-only-cursor-text-area"></button><button hidden=""></button></section></div></div><div class="Box-sc-62in7e-0 kuJVuq"></div><div class="Box-sc-62in7e-0 iafbuG Panel-module__Box--lC3LD panel-content-narrow-styles inner-panel-content-not-narrow"><div id="symbols-pane"><div aria-labelledby="symbols-pane-header" class="Box-sc-62in7e-0 cxWhiL"><div class="Box-sc-62in7e-0 fHoMbg"><h2 id="symbols-pane-header" tabindex="-1" class="Box-sc-62in7e-0 cnoVsg">Symbols</h2><button data-component="IconButton" type="button" data-hotkey="Escape" class="prc-Button-ButtonBase-9n-Xk IconButton__StyledIconButton-sc-i53dt6-0 eJnQTt prc-Button-IconButton-fyge7" data-loading="false" data-no-visuals="true" data-size="medium" data-variant="invisible" aria-describedby=":R3hd9al9lab:-loading-announcement" aria-labelledby=":Rhd9al9lab:"><svg aria-hidden="true" focusable="false" class="octicon octicon-x" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" display="inline-block" overflow="visible" style="vertical-align:text-bottom"><path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"></path></svg></button><span class="prc-TooltipV2-Tooltip-tLeuB" data-direction="w" aria-hidden="true" id=":Rhd9al9lab:">Close symbols</span></div><div class="Box-sc-62in7e-0 caOZLR">Find definitions and references for functions and other symbols in this file by clicking a symbol below or in the code.</div><span class="TextInput__StyledTextInput-sc-ttxlvl-0 bLATi TextInput-wrapper prc-components-TextInputWrapper-Hpdqi prc-components-TextInputBaseWrapper-wY-n0" data-block="true" data-trailing-action="true" data-leading-visual="true" data-trailing-visual="true" aria-busy="false"><span class="TextInput-icon" id=":R3d9al9lab:" aria-hidden="true"><svg aria-hidden="true" focusable="false" class="octicon octicon-filter" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" display="inline-block" overflow="visible" style="vertical-align:text-bottom"><path d="M.75 3h14.5a.75.75 0 0 1 0 1.5H.75a.75.75 0 0 1 0-1.5ZM3 7.75A.75.75 0 0 1 3.75 7h8.5a.75.75 0 0 1 0 1.5h-8.5A.75.75 0 0 1 3 7.75Zm3 4a.75.75 0 0 1 .75-.75h2.5a.75.75 0 0 1 0 1.5h-2.5a.75.75 0 0 1-.75-.75Z"></path></svg></span><input type="text" placeholder="Filter symbols" name="Filter symbols" aria-label="Filter symbols" aria-controls="filter-results" aria-expanded="true" aria-autocomplete="list" role="combobox" aria-describedby=":R3d9al9lab: :R3d9al9labH1:" data-component="input" class="prc-components-Input-IwWrt" value=""/><span class="TextInput-icon" id=":R3d9al9labH1:" aria-hidden="true"><div class="Box-sc-62in7e-0 cIntug"><kbd>r</kbd></div></span></span><div class="Box-sc-62in7e-0 dILSWH"><div id="filter-results" class="Box-sc-62in7e-0 knbnik"><span class="prc-src-InternalVisuallyHidden-2YaI6"><div></div></span><ul role="tree" aria-label="Code Navigation" data-omit-spacer="true" data-truncate-text="true" class="prc-TreeView-TreeViewRootUlStyles-Mzrmj"><li class="PRIVATE_TreeView-item prc-TreeView-TreeViewItem-Ter5f" tabindex="0" id="0handle_interrupt" role="treeitem" aria-labelledby=":R1kd9al9lab:" aria-level="1" aria-selected="false"><div class="PRIVATE_TreeView-item-container prc-TreeView-TreeViewItemContainer-z6qqQ" style="--level:1"><div style="grid-area:spacer;display:flex"><div style="width:100%;display:flex"></div></div><div id=":R1kd9al9lab:" class="PRIVATE_TreeView-item-content prc-TreeView-TreeViewItemContent-RKsCI"><span class="PRIVATE_TreeView-item-content-text prc-TreeView-TreeViewItemContentText-FFaKp"><div class="Box-sc-62in7e-0 iRVXIo"><div class="Box-sc-62in7e-0 kOALiS"><div class="Box-sc-62in7e-0 ihXXeg"></div><div class="Box-sc-62in7e-0 bHnTee">func</div></div>  <div class="Truncate-sc-x3i4it-0 bkmqFA prc-Truncate-Truncate-2G1eo" title="handle_interrupt" style="--truncate-max-width:125px"><span>handle_interrupt</span></div></div></span></div></div></li><li class="PRIVATE_TreeView-item prc-TreeView-TreeViewItem-Ter5f" tabindex="0" id="1check_whiptail" role="treeitem" aria-labelledby=":R2kd9al9lab:" aria-level="1" aria-selected="false"><div class="PRIVATE_TreeView-item-container prc-TreeView-TreeViewItemContainer-z6qqQ" style="--level:1"><div style="grid-area:spacer;display:flex"><div style="width:100%;display:flex"></div></div><div id=":R2kd9al9lab:" class="PRIVATE_TreeView-item-content prc-TreeView-TreeViewItemContent-RKsCI"><span class="PRIVATE_TreeView-item-content-text prc-TreeView-TreeViewItemContentText-FFaKp"><div class="Box-sc-62in7e-0 iRVXIo"><div class="Box-sc-62in7e-0 kOALiS"><div class="Box-sc-62in7e-0 ihXXeg"></div><div class="Box-sc-62in7e-0 bHnTee">func</div></div>  <div class="Truncate-sc-x3i4it-0 bkmqFA prc-Truncate-Truncate-2G1eo" title="check_whiptail" style="--truncate-max-width:125px"><span>check_whiptail</span></div></div></span></div></div></li><li class="PRIVATE_TreeView-item prc-TreeView-TreeViewItem-Ter5f" tabindex="0" id="2check_and_download" role="treeitem" aria-labelledby=":R3kd9al9lab:" aria-level="1" aria-selected="false"><div class="PRIVATE_TreeView-item-container prc-TreeView-TreeViewItemContainer-z6qqQ" style="--level:1"><div style="grid-area:spacer;display:flex"><div style="width:100%;display:flex"></div></div><div id=":R3kd9al9lab:" class="PRIVATE_TreeView-item-content prc-TreeView-TreeViewItemContent-RKsCI"><span class="PRIVATE_TreeView-item-content-text prc-TreeView-TreeViewItemContentText-FFaKp"><div class="Box-sc-62in7e-0 iRVXIo"><div class="Box-sc-62in7e-0 kOALiS"><div class="Box-sc-62in7e-0 ihXXeg"></div><div class="Box-sc-62in7e-0 bHnTee">func</div></div>  <div class="Truncate-sc-x3i4it-0 bkmqFA prc-Truncate-Truncate-2G1eo" title="check_and_download" style="--truncate-max-width:125px"><span>check_and_download</span></div></div></span></div></div></li><li class="PRIVATE_TreeView-item prc-TreeView-TreeViewItem-Ter5f" tabindex="0" id="3docker_compose" role="treeitem" aria-labelledby=":R4kd9al9lab:" aria-level="1" aria-selected="false"><div class="PRIVATE_TreeView-item-container prc-TreeView-TreeViewItemContainer-z6qqQ" style="--level:1"><div style="grid-area:spacer;display:flex"><div style="width:100%;display:flex"></div></div><div id=":R4kd9al9lab:" class="PRIVATE_TreeView-item-content prc-TreeView-TreeViewItemContent-RKsCI"><span class="PRIVATE_TreeView-item-content-text prc-TreeView-TreeViewItemContentText-FFaKp"><div class="Box-sc-62in7e-0 iRVXIo"><div class="Box-sc-62in7e-0 kOALiS"><div class="Box-sc-62in7e-0 ihXXeg"></div><div class="Box-sc-62in7e-0 bHnTee">func</div></div>  <div class="Truncate-sc-x3i4it-0 bkmqFA prc-Truncate-Truncate-2G1eo" title="docker_compose" style="--truncate-max-width:125px"><span>docker_compose</span></div></div></span></div></div></li><li class="PRIVATE_TreeView-item prc-TreeView-TreeViewItem-Ter5f" tabindex="0" id="4get_public_ip" role="treeitem" aria-labelledby=":R5kd9al9lab:" aria-level="1" aria-selected="false"><div class="PRIVATE_TreeView-item-container prc-TreeView-TreeViewItemContainer-z6qqQ" style="--level:1"><div style="grid-area:spacer;display:flex"><div style="width:100%;display:flex"></div></div><div id=":R5kd9al9lab:" class="PRIVATE_TreeView-item-content prc-TreeView-TreeViewItemContent-RKsCI"><span class="PRIVATE_TreeView-item-content-text prc-TreeView-TreeViewItemContentText-FFaKp"><div class="Box-sc-62in7e-0 iRVXIo"><div class="Box-sc-62in7e-0 kOALiS"><div class="Box-sc-62in7e-0 ihXXeg"></div><div class="Box-sc-62in7e-0 bHnTee">func</div></div>  <div class="Truncate-sc-x3i4it-0 bkmqFA prc-Truncate-Truncate-2G1eo" title="get_public_ip" style="--truncate-max-width:125px"><span>get_public_ip</span></div></div></span></div></div></li><li class="PRIVATE_TreeView-item prc-TreeView-TreeViewItem-Ter5f" tabindex="0" id="5check_installed" role="treeitem" aria-labelledby=":R6kd9al9lab:" aria-level="1" aria-selected="false"><div class="PRIVATE_TreeView-item-container prc-TreeView-TreeViewItemContainer-z6qqQ" style="--level:1"><div style="grid-area:spacer;display:flex"><div style="width:100%;display:flex"></div></div><div id=":R6kd9al9lab:" class="PRIVATE_TreeView-item-content prc-TreeView-TreeViewItemContent-RKsCI"><span class="PRIVATE_TreeView-item-content-text prc-TreeView-TreeViewItemContentText-FFaKp"><div class="Box-sc-62in7e-0 iRVXIo"><div class="Box-sc-62in7e-0 kOALiS"><div class="Box-sc-62in7e-0 ihXXeg"></div><div class="Box-sc-62in7e-0 bHnTee">func</div></div>  <div class="Truncate-sc-x3i4it-0 bkmqFA prc-Truncate-Truncate-2G1eo" title="check_installed" style="--truncate-max-width:125px"><span>check_installed</span></div></div></span></div></div></li></ul></div></div></div></div></div></div> <!-- --> <!-- --> </div></div></div></div></div></div></div><div id="find-result-marks-container" class="Box-sc-62in7e-0 vdPNv"></div><button hidden="" data-testid="" data-hotkey-scope="read-only-cursor-text-area"></button><button hidden=""></button></div> <!-- --> <!-- --> <script type="application/json" id="__PRIMER_DATA_:R0:__">{"resolvedServerColorMode":"day"}</script></div>
+</react-app>
+</turbo-frame>
+
+
+
+  </div>
+
+</turbo-frame>
+
+    </main>
+  </div>
+
+  </div>
+
+          <footer class="footer pt-7 pb-6 f6 color-fg-muted color-border-subtle p-responsive" role="contentinfo" >
+  <h2 class='sr-only'>Footer</h2>
+
+  
+
+
+  <div class="d-flex flex-justify-center flex-items-center flex-column-reverse flex-lg-row flex-wrap flex-lg-nowrap">
+    <div class="d-flex flex-items-center flex-shrink-0 mx-2">
+      <a aria-label="GitHub Homepage" class="footer-octicon mr-2" href="https://github.com">
+        <svg aria-hidden="true" height="24" viewBox="0 0 24 24" version="1.1" width="24" data-view-component="true" class="octicon octicon-mark-github">
+    <path d="M12 1C5.923 1 1 5.923 1 12c0 4.867 3.149 8.979 7.521 10.436.55.096.756-.233.756-.522 0-.262-.013-1.128-.013-2.049-2.764.509-3.479-.674-3.699-1.292-.124-.317-.66-1.293-1.127-1.554-.385-.207-.936-.715-.014-.729.866-.014 1.485.797 1.691 1.128.99 1.663 2.571 1.196 3.204.907.096-.715.385-1.196.701-1.471-2.448-.275-5.005-1.224-5.005-5.432 0-1.196.426-2.186 1.128-2.956-.111-.275-.496-1.402.11-2.915 0 0 .921-.288 3.024 1.128a10.193 10.193 0 0 1 2.75-.371c.936 0 1.871.123 2.75.371 2.104-1.43 3.025-1.128 3.025-1.128.605 1.513.221 2.64.111 2.915.701.77 1.127 1.747 1.127 2.956 0 4.222-2.571 5.157-5.019 5.432.399.344.743 1.004.743 2.035 0 1.471-.014 2.654-.014 3.025 0 .289.206.632.756.522C19.851 20.979 23 16.854 23 12c0-6.077-4.922-11-11-11Z"></path>
+</svg>
+</a>
+      <span>
+        &copy; 2025 GitHub,&nbsp;Inc.
+      </span>
+    </div>
+
+    <nav aria-label="Footer">
+      <h3 class="sr-only" id="sr-footer-heading">Footer navigation</h3>
+
+      <ul class="list-style-none d-flex flex-justify-center flex-wrap mb-2 mb-lg-0" aria-labelledby="sr-footer-heading">
+
+          <li class="mx-2">
+            <a data-analytics-event="{&quot;category&quot;:&quot;Footer&quot;,&quot;action&quot;:&quot;go to Terms&quot;,&quot;label&quot;:&quot;text:terms&quot;}" href="https://docs.github.com/site-policy/github-terms/github-terms-of-service" data-view-component="true" class="Link--secondary Link">Terms</a>
+          </li>
+
+          <li class="mx-2">
+            <a data-analytics-event="{&quot;category&quot;:&quot;Footer&quot;,&quot;action&quot;:&quot;go to privacy&quot;,&quot;label&quot;:&quot;text:privacy&quot;}" href="https://docs.github.com/site-policy/privacy-policies/github-privacy-statement" data-view-component="true" class="Link--secondary Link">Privacy</a>
+          </li>
+
+          <li class="mx-2">
+            <a data-analytics-event="{&quot;category&quot;:&quot;Footer&quot;,&quot;action&quot;:&quot;go to security&quot;,&quot;label&quot;:&quot;text:security&quot;}" href="https://github.com/security" data-view-component="true" class="Link--secondary Link">Security</a>
+          </li>
+
+          <li class="mx-2">
+            <a data-analytics-event="{&quot;category&quot;:&quot;Footer&quot;,&quot;action&quot;:&quot;go to status&quot;,&quot;label&quot;:&quot;text:status&quot;}" href="https://www.githubstatus.com/" data-view-component="true" class="Link--secondary Link">Status</a>
+          </li>
+
+          <li class="mx-2">
+            <a data-analytics-event="{&quot;category&quot;:&quot;Footer&quot;,&quot;action&quot;:&quot;go to community&quot;,&quot;label&quot;:&quot;text:community&quot;}" href="https://github.community/" data-view-component="true" class="Link--secondary Link">Community</a>
+          </li>
+
+          <li class="mx-2">
+            <a data-analytics-event="{&quot;category&quot;:&quot;Footer&quot;,&quot;action&quot;:&quot;go to docs&quot;,&quot;label&quot;:&quot;text:docs&quot;}" href="https://docs.github.com/" data-view-component="true" class="Link--secondary Link">Docs</a>
+          </li>
+
+          <li class="mx-2">
+            <a data-analytics-event="{&quot;category&quot;:&quot;Footer&quot;,&quot;action&quot;:&quot;go to contact&quot;,&quot;label&quot;:&quot;text:contact&quot;}" href="https://support.github.com?tags=dotcom-footer" data-view-component="true" class="Link--secondary Link">Contact</a>
+          </li>
+
+          <li class="mx-2" >
+  <cookie-consent-link>
+    <button
+      type="button"
+      class="Link--secondary underline-on-hover border-0 p-0 color-bg-transparent"
+      data-action="click:cookie-consent-link#showConsentManagement"
+      data-analytics-event="{&quot;location&quot;:&quot;footer&quot;,&quot;action&quot;:&quot;cookies&quot;,&quot;context&quot;:&quot;subfooter&quot;,&quot;tag&quot;:&quot;link&quot;,&quot;label&quot;:&quot;cookies_link_subfooter_footer&quot;}"
+    >
+       Manage cookies
+    </button>
+  </cookie-consent-link>
+</li>
+
+<li class="mx-2">
+  <cookie-consent-link>
+    <button
+      type="button"
+      class="Link--secondary underline-on-hover border-0 p-0 color-bg-transparent text-left"
+      data-action="click:cookie-consent-link#showConsentManagement"
+      data-analytics-event="{&quot;location&quot;:&quot;footer&quot;,&quot;action&quot;:&quot;dont_share_info&quot;,&quot;context&quot;:&quot;subfooter&quot;,&quot;tag&quot;:&quot;link&quot;,&quot;label&quot;:&quot;dont_share_info_link_subfooter_footer&quot;}"
+    >
+      Do not share my personal information
+    </button>
+  </cookie-consent-link>
+</li>
+
+      </ul>
+    </nav>
+  </div>
+</footer>
+
+
+
+    <ghcc-consent id="ghcc" class="position-fixed bottom-0 left-0" style="z-index: 999999"
+      data-locale="en"
+      data-initial-cookie-consent-allowed=""
+      data-cookie-consent-required="false"
+    ></ghcc-consent>
+
+
+
+
+  <div id="ajax-error-message" class="ajax-error-message flash flash-error" hidden>
+    <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-alert">
+    <path d="M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0 1 14.082 15H1.918a1.75 1.75 0 0 1-1.543-2.575Zm1.763.707a.25.25 0 0 0-.44 0L1.698 13.132a.25.25 0 0 0 .22.368h12.164a.25.25 0 0 0 .22-.368Zm.53 3.996v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 11a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"></path>
+</svg>
+    <button type="button" class="flash-close js-ajax-error-dismiss" aria-label="Dismiss error">
+      <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-x">
+    <path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"></path>
+</svg>
+    </button>
+    You can’t perform that action at this time.
+  </div>
+
+    <template id="site-details-dialog">
+  <details class="details-reset details-overlay details-overlay-dark lh-default color-fg-default hx_rsm" open>
+    <summary role="button" aria-label="Close dialog"></summary>
+    <details-dialog class="Box Box--overlay d-flex flex-column anim-fade-in fast hx_rsm-dialog hx_rsm-modal">
+      <button class="Box-btn-octicon m-0 btn-octicon position-absolute right-0 top-0" type="button" aria-label="Close dialog" data-close-dialog>
+        <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-x">
+    <path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"></path>
+</svg>
+      </button>
+      <div class="octocat-spinner my-6 js-details-dialog-spinner"></div>
+    </details-dialog>
+  </details>
+</template>
+
+    <div class="Popover js-hovercard-content position-absolute" style="display: none; outline: none;">
+  <div class="Popover-message Popover-message--bottom-left Popover-message--large Box color-shadow-large" style="width:360px;">
+  </div>
+</div>
+
+    <template id="snippet-clipboard-copy-button">
+  <div class="zeroclipboard-container position-absolute right-0 top-0">
+    <clipboard-copy aria-label="Copy" class="ClipboardButton btn js-clipboard-copy m-2 p-0" data-copy-feedback="Copied!" data-tooltip-direction="w">
+      <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-copy js-clipboard-copy-icon m-2">
+    <path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Z"></path><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"></path>
+</svg>
+      <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-check js-clipboard-check-icon color-fg-success d-none m-2">
+    <path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z"></path>
+</svg>
+    </clipboard-copy>
+  </div>
+</template>
+<template id="snippet-clipboard-copy-button-unpositioned">
+  <div class="zeroclipboard-container">
+    <clipboard-copy aria-label="Copy" class="ClipboardButton btn btn-invisible js-clipboard-copy m-2 p-0 d-flex flex-justify-center flex-items-center" data-copy-feedback="Copied!" data-tooltip-direction="w">
+      <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-copy js-clipboard-copy-icon">
+    <path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Z"></path><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"></path>
+</svg>
+      <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-check js-clipboard-check-icon color-fg-success d-none">
+    <path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z"></path>
+</svg>
+    </clipboard-copy>
+  </div>
+</template>
+
+
+    <style>
+      .user-mention[href$="/iiml33"] {
+        color: var(--color-user-mention-fg);
+        background-color: var(--bgColor-attention-muted, var(--color-attention-subtle));
+        border-radius: 2px;
+        margin-left: -2px;
+        margin-right: -2px;
+      }
+      .user-mention[href$="/iiml33"]:before,
+      .user-mention[href$="/iiml33"]:after {
+        content: '';
+        display: inline-block;
+        width: 2px;
+      }
+    </style>
+
+
+    </div>
+    <div id="js-global-screen-reader-notice" class="sr-only mt-n1" aria-live="polite" aria-atomic="true" ></div>
+    <div id="js-global-screen-reader-notice-assertive" class="sr-only mt-n1" aria-live="assertive" aria-atomic="true"></div>
+  </body>
+</html>
+
