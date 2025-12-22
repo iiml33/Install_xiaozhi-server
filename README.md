@@ -6,10 +6,7 @@
 可快速使用Docker部署小智服务端
 
 # 食用方法：
-使用我自建的镜像源（推荐，已接入腾讯云CDN，更新速度快，与本仓库脚本实时同步）：
-```
-sudo bash -c "$(wget -qO- https://xiaozhi.xcnahida.cn/inst.sh)"
-```
+
 
 使用github源获取脚本（无科学上网环境不推荐使用）：
 ```
@@ -25,7 +22,3 @@ sudo bash -c "$(wget -qO- https://ghfast.top/https://raw.githubusercontent.com/i
 1. 本脚本仅适用于Ubuntu/Debian系统
 2. 未测试过arm架构的系统
 
-# 帮助与支持
- - QQ群 （功能疑问可在此提问）
-    - [195260107](https://qm.qq.com/q/KnVT7bcAgy)
-    - [621457510](https://qm.qq.com/q/8fhlPfJ6Hm)
