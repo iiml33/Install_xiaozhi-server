@@ -373,6 +373,15 @@ fi
 # 创建安装目录
 echo "------------------------------------------------------------"
 echo "开始创建安装目录..."
+
+# 检查并创建数据目录
+if [ ! -d /opt/xiaozhi-esp32-server/config/cat_sounds ]; then
+    mkdir -p /opt/xiaozhi-esp32-server/config/cat_sounds
+    echo "已创建数据目录: /opt/xiaozhi-esp32-server/config/cat_sounds"
+else
+    echo "目录/opt/xiaozhi-esp32-server/config/cat_sounds已存在，跳过创建"
+fi
+
 # 检查并创建数据目录
 if [ ! -d /opt/xiaozhi-server/data ]; then
     mkdir -p /opt/xiaozhi-server/data
