@@ -385,11 +385,10 @@ if [ ! -d /opt/xiaozhi-server/cat_sounds ]; then
     mkdir -p /opt/xiaozhi-server/cat_sounds/Purr
     mkdir -p /opt/xiaozhi-server/cat_sounds/Scream
     mkdir -p /opt/xiaozhi-server/cat_sounds/Trill
-    mkdir -p /opt/xiaozhi-server/cat_sounds/Yowl
-    
-    echo "已创建数据目录: /opt/xiaozhi-server/config/cat_sounds"
+    mkdir -p /opt/xiaozhi-server/cat_sounds/Yowl    
+    echo "已创建数据目录: /opt/xiaozhi-server/cat_sounds"
 else
-    echo "目录/opt/xiaozhi-server/config/cat_sounds已存在，跳过创建"
+    echo "目录/opt/xiaozhi-server/cat_sounds已存在，跳过创建"
 fi
 
 # 检查并创建数据目录
